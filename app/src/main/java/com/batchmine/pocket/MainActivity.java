@@ -41,6 +41,7 @@ public final class MainActivity extends Activity {
     private FrameLayout body;
     private TextView langBtn, status;
     private String tab = "books";
+    private static volatile boolean syncing;
     private final List<TextView> tabs = new ArrayList<>();
 
     @Override protected void onCreate(Bundle b) {
@@ -139,6 +140,8 @@ public final class MainActivity extends Activity {
     private void sync() {
         PcLink pc = app.pc();
         if (pc == null) { tab = "settings"; show(); Ui.toast(this, "First paste the link from Glossa on the PC (Settings → Phone access)"); return; }
+        if (syncing) { Ui.toast(this, "Already syncing…"); return; }
+        syncing = true;
         status.setText("syncing with the PC…");
         String lang = app.lang();
         app.bg(() -> {
@@ -147,6 +150,8 @@ public final class MainActivity extends Activity {
                 app.post(() -> { Ui.toast(this, "Synced: " + msg); show(); });
             } catch (IOException e) {
                 app.post(() -> { show(); Ui.alert(this, "Could not sync", explain(e)); });
+            } finally {
+                syncing = false;
             }
         });
     }
@@ -167,36 +172,44 @@ public final class MainActivity extends Activity {
         acts.addView(Ui.weight(Ui.button(this, "From the PC", v -> pcBooks()), 1));
         Ui.add(l, acts, 8);
         String lang = app.lang();
-        List<File> files = bookFiles(lang);
-        if (files.isEmpty()) l.addView(Ui.hint(this, "No " + lang.toUpperCase(Locale.ROOT) + " books yet. Add an EPUB or text file from the phone, or copy a book from the Reader on the PC."));
-        for (File f : files) {
-            try {
-                Book bk = Book.read(f);
-                int[] pos = Reader.position(bk.id);
-                String sub = bk.chapters.size() + " chapters" + (pos[0] > 0 || pos[1] > 0 ? " · at chapter " + (pos[0] + 1) : "");
-                LinearLayout it = Ui.item(this, bk.title, sub, v -> { Intent i = new Intent(this, Reader.class); i.putExtra("id", bk.id); startActivity(i); });
-                it.setOnLongClickListener(v -> {
-                    Ui.dialog(this).setTitle(bk.title).setItems(new String[]{"Delete this book"}, (d, w) -> { f.delete(); show(); }).show();
-                    return true;
-                });
-                Ui.add(l, it, 8);
-            } catch (IOException | RuntimeException ignored) { }
+        List<BookInfo> books = bookList(lang);
+        if (books.isEmpty()) l.addView(Ui.hint(this, "No " + lang.toUpperCase(Locale.ROOT) + " books yet. Add an EPUB or text file from the phone, or copy a book from the Reader on the PC."));
+        for (BookInfo bk : books) {
+            int[] pos = Reader.position(bk.id);
+            String sub = bk.chapters + " chapters" + (pos[0] > 0 || pos[1] > 0 ? " · at chapter " + (pos[0] + 1) : "");
+            LinearLayout it = Ui.item(this, bk.title, sub, v -> { Intent i = new Intent(this, Reader.class); i.putExtra("id", bk.id); startActivity(i); });
+            it.setOnLongClickListener(v -> {
+                Ui.dialog(this).setTitle(bk.title).setItems(new String[]{"Delete this book"}, (d, w) -> { bk.file.delete(); show(); }).show();
+                return true;
+            });
+            Ui.add(l, it, 8);
         }
         return Ui.scroll(this, l);
     }
 
-    List<File> bookFiles(String lang) {
-        List<File> out = new ArrayList<>();
+    /** What the book list shows of a book; read once per file version (books can be megabytes). */
+    static final class BookInfo {
+        File file; long stamp; String id, title, lang; int chapters;
+    }
+
+    private static final Map<String, BookInfo> bookCache = new java.util.HashMap<>();
+
+    List<BookInfo> bookList(String lang) {
+        List<BookInfo> out = new ArrayList<>();
         File[] fs = app.dir("books").listFiles((d, n) -> n.endsWith(".json"));
         if (fs == null) return out;
         Arrays.sort(fs, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
         for (File f : fs) {
-            try {
-                String head = new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8);
-                int i = head.indexOf("\"lang\":\"");
-                String l = i < 0 ? "" : head.substring(i + 8, Math.max(i + 8, head.indexOf('"', i + 8)));
-                if (l.isEmpty() || l.equals(lang)) out.add(f);
-            } catch (IOException ignored) { }
+            BookInfo bi = bookCache.get(f.getPath());
+            if (bi == null || bi.stamp != f.lastModified() + f.length()) {
+                try {
+                    Book bk = Book.read(f);
+                    bi = new BookInfo();
+                    bi.file = f; bi.stamp = f.lastModified() + f.length(); bi.id = bk.id; bi.title = bk.title; bi.lang = bk.lang; bi.chapters = bk.chapters.size();
+                    bookCache.put(f.getPath(), bi);
+                } catch (IOException | RuntimeException e) { continue; }
+            }
+            if (bi.lang.isEmpty() || bi.lang.equals(lang)) out.add(bi);
         }
         return out;
     }
@@ -295,6 +308,7 @@ public final class MainActivity extends Activity {
         final boolean[] cancel = {false};
         AlertDialog dlg = Ui.dialog(this).setTitle("Copying from the PC").setView(box).setCancelable(false)
                 .setNegativeButton("Stop (kept: it continues next time)", (d, w) -> cancel[0] = true).show();
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);      // a sleeping phone drops the Wi-Fi
         app.bg(() -> {
             try {
                 for (Object s : Json.arr(v.get("subs"))) {
@@ -305,9 +319,9 @@ public final class MainActivity extends Activity {
                     @Override public void progress(long done, long total) { app.post(() -> bar.setProgress(total > 0 ? (int) (done * 1000 / total) : 0)); }
                     @Override public boolean cancelled() { return cancel[0]; }
                 });
-                app.post(() -> { dlg.dismiss(); Ui.toast(this, name + " copied"); show(); });
+                app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.toast(this, name + " copied"); show(); });
             } catch (IOException e) {
-                app.post(() -> { dlg.dismiss(); if (!cancel[0]) Ui.alert(this, "Could not copy", explain(e)); show(); });
+                app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); if (!cancel[0]) Ui.alert(this, "Could not copy", explain(e)); show(); });
             }
         });
     }
@@ -457,12 +471,13 @@ public final class MainActivity extends Activity {
                         String ext = name.substring(name.lastIndexOf('.')).toLowerCase(Locale.ROOT);
                         String tag = Player.guessLang(name);
                         String nn = stem + "." + tag + ext;
-                        for (int i = 2; used.contains(nn.toLowerCase(Locale.ROOT)) || new File(app.videoDir(), nn).exists() && !nn.equalsIgnoreCase(name); i++)
+                        for (int i = 2; used.contains(nn.toLowerCase(Locale.ROOT)); i++)
                             nn = stem + "." + tag + i + ext;
                         name = nn;
                     }
                     used.add(name.toLowerCase(Locale.ROOT));
                     try (InputStream in = getContentResolver().openInputStream(uris.get(k)); OutputStream out = new FileOutputStream(new File(app.videoDir(), name))) {
+                        if (in == null) throw new IOException("could not open " + names.get(k));
                         byte[] buf = new byte[1 << 16];
                         int r;
                         while ((r = in.read(buf)) > 0) out.write(buf, 0, r);
@@ -486,9 +501,9 @@ public final class MainActivity extends Activity {
             try (InputStream in = getContentResolver().openInputStream(u)) {
                 File d = Dict.importZip(new java.io.BufferedInputStream(in, 1 << 16), app.dicts.root, (what, n) -> app.post(() -> msg.setText(what.equals("sorting") ? "Sorting… (nearly done)" : n + " entries read…")));
                 app.dicts.reload();
-                app.post(() -> { dlg.dismiss(); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.toast(this, "Imported " + d.getName()); show(); });
+                app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.toast(this, "Imported " + d.getName()); show(); });
             } catch (IOException | RuntimeException e) {
-                app.post(() -> { dlg.dismiss(); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.alert(this, "Could not import", String.valueOf(e.getMessage())); });
+                app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.alert(this, "Could not import", String.valueOf(e.getMessage())); });
             }
         });
     }

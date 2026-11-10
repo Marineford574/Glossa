@@ -161,11 +161,30 @@ public final class Ui {
     public static void toast(Context c, CharSequence s) { Toast.makeText(c, s, s.length() > 60 ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT).show(); }
 
     public static void alert(Context c, String title, String msg) {
-        new AlertDialog.Builder(c, android.R.style.Theme_DeviceDefault_Dialog_Alert).setTitle(title).setMessage(msg)
-                .setPositiveButton("OK", null).show();
+        dialog(c).setTitle(title).setMessage(msg).setPositiveButton("OK", null).show();
     }
 
-    public static AlertDialog.Builder dialog(Context c) { return new AlertDialog.Builder(c, android.R.style.Theme_DeviceDefault_Dialog_Alert); }
+    /** A dialog builder whose show() does nothing (instead of crashing) when the screen it belongs to has closed meanwhile. */
+    public static AlertDialog.Builder dialog(Context c) {
+        return new AlertDialog.Builder(c, android.R.style.Theme_DeviceDefault_Dialog_Alert) {
+            @Override public AlertDialog show() {
+                AlertDialog d = create();
+                if (gone(c)) return d;
+                try { d.show(); } catch (RuntimeException ignored) { }       // the screen closed between the check and now
+                return d;
+            }
+        };
+    }
+
+    /** Is this screen closed (or closing)? */
+    public static boolean gone(Context c) {
+        return c instanceof android.app.Activity && (((android.app.Activity) c).isFinishing() || ((android.app.Activity) c).isDestroyed());
+    }
+
+    /** Closes a dialog, even if its screen has already gone. */
+    public static void dismiss(android.app.Dialog d) {
+        try { if (d != null && d.isShowing()) d.dismiss(); } catch (RuntimeException ignored) { }
+    }
 
     public static String size(long b) {
         if (b >= 1L << 30) return String.format(java.util.Locale.ROOT, "%.1f GB", b / (double) (1L << 30));

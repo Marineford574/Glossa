@@ -151,6 +151,7 @@ public final class Player extends Activity {
             int at = (int) (app.prefs().getFloat("vpos_" + file.getName(), 0) * 1000);
             if (at > 5000 && at < video.getDuration() - 8000) video.seekTo(at - 2000);
             video.start();
+            h.removeCallbacksAndMessages(null);
             tick();
         });
         video.setOnErrorListener((mp, w, e) -> { Ui.alert(this, "Cannot play this video", "The phone could not play " + file.getName() + ". MP4 (H.264) works everywhere; other formats depend on the phone."); return true; });

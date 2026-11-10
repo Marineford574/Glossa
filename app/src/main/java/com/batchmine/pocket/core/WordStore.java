@@ -55,7 +55,19 @@ public final class WordStore {
             for (Object x : Json.arr(m.get("saved"))) saved.add(Json.obj(x));
             for (Object x : Json.arr(m.get("pending"))) pending.add(Json.obj(x));
             pulled = (long) Json.num(m.get("pulled"), 0);
-        } catch (IOException | RuntimeException ignored) { }
+        } catch (IOException | RuntimeException e) {
+            // Damaged (cut off while being written?): keep it aside so it is not overwritten by an empty list, and go on.
+            //noinspection ResultOfMethodCallIgnored
+            file.renameTo(new File(file.getPath() + ".damaged-" + System.currentTimeMillis()));
+            File tmp = new File(file.getPath() + ".tmp");
+            if (tmp.isFile()) {                                      // the half-finished save may be the good copy
+                try {
+                    Json.obj(Json.parse(new String(Files.readAllBytes(tmp.toPath()), StandardCharsets.UTF_8)));
+                    if (tmp.renameTo(file)) { known.clear(); cards.clear(); knownAdd.clear(); knownDel.clear(); seen.clear(); seenAdd.clear();
+                        mined.clear(); saved.clear(); pending.clear(); load(); }
+                } catch (IOException | RuntimeException ignored) { }
+            }
+        }
     }
 
     public synchronized void save() {

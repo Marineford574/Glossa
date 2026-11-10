@@ -38,10 +38,22 @@ public final class WordSheet {
         TextView sub = Ui.text(a, "looking up…", 14, Ui.DIM);
         box.addView(head);
         box.addView(sub);
-        WebView web = new WebView(a);
-        web.setBackgroundColor(Ui.BG);
-        web.getSettings().setJavaScriptEnabled(false);
-        box.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        WebView web = null;
+        TextView plain = null;
+        try {
+            web = new WebView(a);
+            web.setBackgroundColor(Ui.BG);
+            web.getSettings().setJavaScriptEnabled(false);
+            box.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        } catch (RuntimeException e) {                     // no WebView on this phone right now (being updated, switched off)
+            web = null;
+            plain = Ui.text(a, "", 15, Ui.TEXT);
+            android.widget.ScrollView sv = new android.widget.ScrollView(a);
+            sv.addView(plain);
+            box.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        }
+        final WebView webF = web;
+        final TextView plainF = plain;
         LinearLayout btns = Ui.row(a);
         btns.setPadding(0, Ui.dp(a, 10), 0, 0);
         WordStore ws = app.store(lang);
@@ -95,7 +107,9 @@ public final class WordSheet {
             d.dismiss();
             Cards.make(a, r, () -> { if (onChange != null) onChange.changed(); });
         });
+        if (Ui.gone(a)) return;
         d.show();
+        d.setOnDismissListener(x -> { if (webF != null) try { webF.destroy(); } catch (RuntimeException ignored) { } });
         app.bg(() -> {
             Dictionaries.Result r = app.dicts.lookup(word, lang);
             ws.lookedUp(r.found() ? r.lemma() : word);
@@ -106,7 +120,8 @@ public final class WordSheet {
                 if (r.found() && !r.lemma().equalsIgnoreCase(word)) s.append("→ ").append(r.lemma());
                 for (String ipa : r.ipa.values()) { if (s.length() > 0) s.append("   "); s.append(ipa); break; }
                 sub.setText(s.length() > 0 ? s : r.found() ? "" : "not in your dictionaries");
-                web.loadDataWithBaseURL(null, html, "text/html", "utf-8", null);
+                if (webF != null) webF.loadDataWithBaseURL(null, html, "text/html", "utf-8", null);
+                else if (plainF != null) plainF.setText(android.text.Html.fromHtml(html.replaceAll("(?s)<style>.*?</style>", ""), android.text.Html.FROM_HTML_MODE_COMPACT));
                 refreshKnown.run();
                 if (onChange != null) onChange.changed();      // it now counts as looked up
             });

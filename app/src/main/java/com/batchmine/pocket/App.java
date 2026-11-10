@@ -88,5 +88,14 @@ public final class App extends Application {
         });
     }
 
-    public void post(Runnable r) { ui.post(r); }
+    /** Work on the screen's thread; a mistake in it is reported instead of closing the app. */
+    public void post(Runnable r) {
+        ui.post(() -> {
+            try { r.run(); }
+            catch (RuntimeException e) {
+                report("Something went wrong on the screen (the app stayed open)", e);
+                android.widget.Toast.makeText(this, "Something went wrong: " + e + " (details in Settings → Problem report)", android.widget.Toast.LENGTH_LONG).show();
+            }
+        });
+    }
 }

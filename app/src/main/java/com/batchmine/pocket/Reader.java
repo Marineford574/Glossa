@@ -45,12 +45,13 @@ public final class Reader extends Activity {
         String id = getIntent().getStringExtra("id");
         try {
             book = Book.read(new File(app.dir("books"), id + ".json"));
-        } catch (IOException | RuntimeException e) { Ui.toast(this, "Could not open the book"); finish(); return; }
+        } catch (IOException | RuntimeException e) { app.report("Could not open book " + id, e); Ui.toast(this, "Could not open the book"); finish(); return; }
+        if (book.chapters.isEmpty()) { Ui.toast(this, "This book has no text"); finish(); return; }
         col = new Colourer(app.lang().equals(book.lang) || book.lang.isEmpty() ? app.lang() : book.lang);
         col.colours = sp.getBoolean("colours", true);
         size = sp.getFloat("fs", 19);
-        chapter = Math.min(sp.getInt("rc_" + id, 0), book.chapters.size() - 1);
-        firstPara = sp.getInt("rp_" + id, 0);
+        chapter = Math.max(0, Math.min(sp.getInt("rc_" + id, 0), book.chapters.size() - 1));
+        firstPara = Math.max(0, sp.getInt("rp_" + id, 0));
         LinearLayout root = Ui.col(this);
         root.setBackgroundColor(Ui.BG);
         LinearLayout bar = Ui.row(this);
@@ -103,7 +104,7 @@ public final class Reader extends Activity {
         sp.edit().putInt("rc_" + book.id, chapter).putInt("rp_" + book.id, pos).apply();
     }
 
-    @Override protected void onPause() { super.onPause(); save(); }
+    @Override protected void onPause() { super.onPause(); if (book != null && list != null) save(); }
 
     private void draw(boolean keep) {
         int at = keep ? list.getFirstVisiblePosition() : firstPara;
@@ -140,7 +141,7 @@ public final class Reader extends Activity {
 
     private void tapped(String word, int at, String text) {
         Cards.Request r = new Cards.Request();
-        r.lang = col == null ? app.lang() : app.lang();
+        r.lang = book.lang.isEmpty() ? app.lang() : book.lang;
         r.kind = "text";
         r.sentence = Colourer.sentenceAt(text, at);
         r.title = book.title;
