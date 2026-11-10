@@ -61,7 +61,7 @@ public final class Subs {
             String[] p = rest.split(",", fields);
             if (p.length <= Math.max(iText, Math.max(iStart, iEnd))) continue;
             String body = p[iText];
-            if (body.matches("(?s).*\\{[^}]*\\\\p[1-9][^}]*}.*")) continue;                 // a drawing, not words
+            if (body.matches("(?s).*\\{[^}]*\\\\p[1-9][^}]*\\}.*")) continue;                 // a drawing, not words
             Double a = assTime(p[iStart]), b = assTime(p[iEnd]);
             if (a == null || b == null || b <= a) continue;
             String clean = clean(body.replace("\\n", "\n").replace("\\h", " "));
@@ -111,7 +111,7 @@ public final class Subs {
 
     /** Without formatting: <i>, {\an8}, ASS drawing codes, speaker dashes kept, spaces tidied. */
     public static String clean(String s) {
-        s = s.replaceAll("\\{\\\\[^}]*}", "").replaceAll("</?[a-zA-Z][^>]*>", "")
+        s = s.replaceAll("\\{\\\\[^}]*\\}", "").replaceAll("</?[a-zA-Z][^>]*>", "")
                 .replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("\\N", "\n");
         StringBuilder sb = new StringBuilder();
         for (String line : s.split("\n")) {
