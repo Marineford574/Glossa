@@ -24,7 +24,7 @@ public final class Colourer {
 
     private final App app = App.get();
     private final String lang;
-    private final Map<String, Boolean> listed = new HashMap<>();
+    private final Map<String, Boolean> listed = new java.util.concurrent.ConcurrentHashMap<>();
     public boolean colours = true;
 
     public Colourer(String lang) { this.lang = lang; }

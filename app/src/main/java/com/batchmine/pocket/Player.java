@@ -47,7 +47,21 @@ public final class Player extends Activity {
 
     static String niceName(File f) { return f.getName().replaceAll("\\.[^.]+$", ""); }
 
-    /** Subtitle files that belong to a video: its name, then a language tag, then .srt / .vtt. */
+    static boolean isSub(String n) {
+        n = n.toLowerCase(Locale.ROOT);
+        return n.endsWith(".srt") || n.endsWith(".vtt") || n.endsWith(".ass") || n.endsWith(".ssa");
+    }
+
+    /** A language code from a subtitle file name: "x.de.srt", "x.German.ass", "x_eng.srt" -> de / en; else "sub". */
+    static String guessLang(String name) {
+        String n = name.toLowerCase(Locale.ROOT);
+        String[][] known = {{"de", "german|deutsch|deu|ger"}, {"en", "english|eng"}, {"it", "italian|italiano|ita"}, {"hr", "croatian|hrvatski|hrv"},
+                {"fr", "french|fran[cç]ais|fra|fre"}, {"es", "spanish|espa[nñ]ol|spa"}, {"ja", "japanese|jpn"}, {"pt", "portuguese|por"}, {"nl", "dutch|nld"}};
+        for (String[] k : known) if (java.util.regex.Pattern.compile("(^|[^a-z])(" + k[0] + "|" + k[1] + ")([^a-z]|$)").matcher(n.replaceAll("\\.[^.]+$", "")).find()) return k[0];
+        return "sub";
+    }
+
+    /** Subtitle files that belong to a video: its name, then a language tag, then .srt / .vtt / .ass / .ssa. */
     static List<File> subsOf(File v) {
         List<File> out = new ArrayList<>();
         String stem = niceName(v).toLowerCase(Locale.ROOT);
@@ -56,7 +70,7 @@ public final class Player extends Activity {
         java.util.Arrays.sort(fs);
         for (File f : fs) {
             String n = f.getName().toLowerCase(Locale.ROOT);
-            if (!(n.endsWith(".srt") || n.endsWith(".vtt"))) continue;
+            if (!isSub(n)) continue;
             String s = n.substring(0, n.lastIndexOf('.'));
             if (s.equals(stem) || s.startsWith(stem + ".")) out.add(f);
         }
@@ -66,6 +80,15 @@ public final class Player extends Activity {
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
         app = App.get();
+        try { build(); }
+        catch (RuntimeException e) {
+            app.report("The player could not open " + getIntent().getStringExtra("path"), e);
+            Ui.dialog(this).setTitle("Cannot open the video").setMessage(e + "\n\nThe details are saved: Settings → Problem report.")
+                    .setPositiveButton("OK", (d, i) -> finish()).setOnCancelListener(d -> finish()).show();
+        }
+    }
+
+    private void build() {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         file = new File(getIntent().getStringExtra("path"));
         lang = app.lang();
@@ -157,8 +180,12 @@ public final class Player extends Activity {
     }
 
     private List<Subs.Cue> read(File f) {
-        try { return Subs.parse(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)); }
-        catch (IOException e) { return new ArrayList<>(); }
+        try { return Subs.parse(Subs.decode(Files.readAllBytes(f.toPath()))); }
+        catch (IOException | RuntimeException e) {
+            app.report("Could not read " + f.getName(), e);
+            Ui.toast(this, "Could not read " + f.getName());
+            return new ArrayList<>();
+        }
     }
 
     private void toggle() { if (video.isPlaying()) video.pause(); else video.start(); }
@@ -201,7 +228,7 @@ public final class Player extends Activity {
 
     private void subsDialog() {
         List<File> subs = subsOf(file);
-        if (subs.isEmpty()) { Ui.alert(this, "Subtitles", "There is no .srt or .vtt next to this video. Add the subtitle files with the video (Videos → Add a video, choose both), or copy it from the PC with its subtitles."); return; }
+        if (subs.isEmpty()) { Ui.alert(this, "Subtitles", "There is no subtitle file (.srt, .vtt, .ass) with this video. Add the subtitle files with the video (Videos → Add a video, choose both), or copy it from the PC with its subtitles."); return; }
         String[] names = new String[subs.size()];
         for (int i = 0; i < names.length; i++) names[i] = subs.get(i).getName();
         Ui.dialog(this).setTitle("Subtitles to learn from").setItems(names, (d, i) -> {
@@ -217,14 +244,20 @@ public final class Player extends Activity {
         }).show();
     }
 
+    private boolean tickFailed;
+
     private void tick() {
-        if (isFinishing()) return;
-        int pos = video.getCurrentPosition();
-        double t = pos / 1000.0;
-        if (!dragging) { seek.setProgress(pos); timeText.setText(Ui.time(t)); }
-        if (loopUntil > 0 && t >= loopUntil) { video.seekTo((int) (Math.max(0, loopFrom) * 1000)); }
-        int i = Subs.at(main, t);
-        if (i != shown) { shown = i; showLine(i); }
+        if (isFinishing() || video == null) return;
+        try {
+            int pos = video.getCurrentPosition();
+            double t = pos / 1000.0;
+            if (!dragging) { seek.setProgress(pos); timeText.setText(Ui.time(t)); }
+            if (loopUntil > 0 && t >= loopUntil) { video.seekTo((int) (Math.max(0, loopFrom) * 1000)); }
+            int i = Subs.at(main, t);
+            if (i != shown) { shown = i; showLine(i); }
+        } catch (RuntimeException e) {
+            if (!tickFailed) { tickFailed = true; app.report("Player: showing a line", e); Ui.toast(this, "Something went wrong: " + e); }
+        }
         h.postDelayed(this::tick, 120);
     }
 
@@ -262,7 +295,7 @@ public final class Player extends Activity {
 
     @Override protected void onPause() {
         super.onPause();
-        if (video != null) {
+        if (video != null && file != null) {
             app.prefs().edit().putFloat("vpos_" + file.getName(), video.getCurrentPosition() / 1000f).apply();
             video.pause();
         }

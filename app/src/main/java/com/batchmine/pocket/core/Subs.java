@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Subtitles (.srt and .vtt) as a list of lines with times, and the words in a line. */
+/** Subtitles (.srt, .vtt, .ass / .ssa) as a list of lines with times, and the words in a line. */
 public final class Subs {
     private Subs() { }
 
@@ -18,7 +18,71 @@ public final class Subs {
     private static final Pattern TIME = Pattern.compile(
             "(?:(\\d+):)?(\\d{1,2}):(\\d{2})[,.](\\d{1,3})\\s*-->\\s*(?:(\\d+):)?(\\d{1,2}):(\\d{2})[,.](\\d{1,3})");
 
+    /** The text of a subtitle file: UTF-8 or UTF-16 (with or without a BOM), else Windows-1252 (old German / Italian files). */
+    public static String decode(byte[] b) {
+        if (b.length >= 3 && (b[0] & 0xFF) == 0xEF && (b[1] & 0xFF) == 0xBB && (b[2] & 0xFF) == 0xBF)
+            return new String(b, 3, b.length - 3, java.nio.charset.StandardCharsets.UTF_8);
+        if (b.length >= 2 && (b[0] & 0xFF) == 0xFF && (b[1] & 0xFF) == 0xFE) return new String(b, 2, b.length - 2, java.nio.charset.StandardCharsets.UTF_16LE);
+        if (b.length >= 2 && (b[0] & 0xFF) == 0xFE && (b[1] & 0xFF) == 0xFF) return new String(b, 2, b.length - 2, java.nio.charset.StandardCharsets.UTF_16BE);
+        int n = Math.min(b.length, 4000), zeroOdd = 0, zeroEven = 0;
+        for (int i = 0; i < n; i++) if (b[i] == 0) { if ((i & 1) == 1) zeroOdd++; else zeroEven++; }
+        if (zeroOdd > n / 4) return new String(b, java.nio.charset.StandardCharsets.UTF_16LE);
+        if (zeroEven > n / 4) return new String(b, java.nio.charset.StandardCharsets.UTF_16BE);
+        java.nio.charset.CharsetDecoder d = java.nio.charset.StandardCharsets.UTF_8.newDecoder();
+        try { return d.decode(java.nio.ByteBuffer.wrap(b)).toString(); }
+        catch (java.nio.charset.CharacterCodingException e) { return new String(b, java.nio.charset.Charset.forName("windows-1252")); }
+    }
+
+    private static final Pattern ASS_TIME = Pattern.compile("(\\d+):(\\d{1,2}):(\\d{1,2})[.:](\\d{1,3})");
+
+    /** An .ass / .ssa file: the Dialogue lines of [Events], drawings and comments left out, duplicates (layers) merged. */
+    public static List<Cue> parseAss(String text) {
+        List<Cue> out = new ArrayList<>();
+        int iStart = 1, iEnd = 2, iText = 9, fields = 10;
+        boolean events = false;
+        java.util.Set<String> had = new java.util.HashSet<>();
+        for (String raw : text.replace("\uFEFF", "").replace("\r\n", "\n").replace('\r', '\n').split("\n")) {
+            String line = raw.trim();
+            if (line.startsWith("[")) { events = line.equalsIgnoreCase("[Events]"); continue; }
+            if (!events) continue;
+            int colon = line.indexOf(':');
+            if (colon < 0) continue;
+            String kind = line.substring(0, colon).trim(), rest = line.substring(colon + 1).trim();
+            if (kind.equalsIgnoreCase("Format")) {
+                String[] f = rest.split(",");
+                fields = f.length;
+                for (int i = 0; i < f.length; i++) {
+                    String k = f[i].trim().toLowerCase(java.util.Locale.ROOT);
+                    if (k.equals("start")) iStart = i; else if (k.equals("end")) iEnd = i; else if (k.equals("text")) iText = i;
+                }
+                continue;
+            }
+            if (!kind.equalsIgnoreCase("Dialogue")) continue;
+            String[] p = rest.split(",", fields);
+            if (p.length <= Math.max(iText, Math.max(iStart, iEnd))) continue;
+            String body = p[iText];
+            if (body.matches("(?s).*\\{[^}]*\\\\p[1-9][^}]*}.*")) continue;                 // a drawing, not words
+            Double a = assTime(p[iStart]), b = assTime(p[iEnd]);
+            if (a == null || b == null || b <= a) continue;
+            String clean = clean(body.replace("\\n", "\n").replace("\\h", " "));
+            if (clean.isEmpty()) continue;
+            if (!had.add(a + "|" + b + "|" + clean)) continue;
+            out.add(new Cue(a, b, clean));
+        }
+        out.sort((x, y) -> Double.compare(x.start, y.start));
+        return out;
+    }
+
+    private static Double assTime(String s) {
+        Matcher m = ASS_TIME.matcher(s.trim());
+        if (!m.find()) return null;
+        String f = m.group(4);
+        double frac = f.length() == 2 ? Integer.parseInt(f) / 100.0 : f.length() == 1 ? Integer.parseInt(f) / 10.0 : Integer.parseInt(f) / 1000.0;
+        return Integer.parseInt(m.group(1)) * 3600 + Integer.parseInt(m.group(2)) * 60 + Integer.parseInt(m.group(3)) + frac;
+    }
+
     public static List<Cue> parse(String text) {
+        if (text.contains("[Events]") || text.contains("\nDialogue:")) return parseAss(text);
         List<Cue> out = new ArrayList<>();
         String[] lines = text.replace("﻿", "").replace("\r\n", "\n").replace('\r', '\n').split("\n");
         for (int i = 0; i < lines.length; i++) {

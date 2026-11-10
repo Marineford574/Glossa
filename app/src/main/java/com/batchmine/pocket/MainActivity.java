@@ -78,6 +78,32 @@ public final class MainActivity extends Activity {
         root.addView(bar);
         setContentView(root);
         if (b != null) tab = b.getString("tab", "books");
+        File crash = new File(getFilesDir(), "crash.txt");
+        if (crash.isFile()) {
+            File seen = new File(getFilesDir(), "crash-seen.txt");
+            seen.delete();
+            crash.renameTo(seen);
+            problemReport("Something went wrong last time", seen);
+        }
+    }
+
+    /** The saved report of a crash, to copy and send. */
+    private void problemReport(String title, File f) {
+        String text;
+        try { text = new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8); }
+        catch (IOException e) { Ui.toast(this, "No problem report saved"); return; }
+        TextView t = Ui.text(this, text, 11, Ui.TEXT);
+        t.setTextIsSelectable(true);
+        t.setPadding(Ui.dp(this, 16), Ui.dp(this, 8), Ui.dp(this, 16), Ui.dp(this, 8));
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(t);
+        Ui.dialog(this).setTitle(title).setView(sv)
+                .setPositiveButton("Copy", (d, i) -> {
+                    android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("Glossa Pocket problem report", text));
+                    Ui.toast(this, "Copied: paste it to Claude");
+                })
+                .setNegativeButton("Close", null).show();
     }
 
     @Override protected void onSaveInstanceState(Bundle o) { super.onSaveInstanceState(o); o.putString("tab", tab); }
@@ -209,12 +235,12 @@ public final class MainActivity extends Activity {
         LinearLayout l = Ui.col(this);
         l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 12));
         LinearLayout acts = Ui.row(this);
-        acts.addView(Ui.weight(Ui.primary(this, "Add a video", v -> pick(REQ_VIDEO, new String[]{"video/*", "application/x-subrip", "text/vtt", "application/octet-stream", "text/*"}, true)), 1));
+        acts.addView(Ui.weight(Ui.primary(this, "Add a video", v -> pick(REQ_VIDEO, new String[]{"video/*", "application/x-subrip", "text/vtt", "text/x-ssa", "application/octet-stream", "text/*"}, true)), 1));
         acts.addView(Ui.weight(Ui.button(this, "From the PC", v -> pcVideos()), 1));
         Ui.add(l, acts, 8);
         File[] fs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
         if (fs == null || fs.length == 0) {
-            l.addView(Ui.hint(this, "No videos yet. “Add a video” takes a video from the phone together with its subtitle files (.srt / .vtt): choose them all in one go. “From the PC” copies an episode and its subtitles over Wi-Fi."));
+            l.addView(Ui.hint(this, "No videos yet. “Add a video” takes a video from the phone together with its subtitle files (.srt / .vtt / .ass): choose them all in one go. “From the PC” copies an episode and its subtitles over Wi-Fi."));
         } else {
             Arrays.sort(fs);
             for (File f : fs) {
@@ -358,6 +384,11 @@ public final class MainActivity extends Activity {
         cr.addView(Ui.weight(Ui.button(this, "AnkiDroid fields…", v -> Cards.setup(this, app.lang(), this::show)), 1));
         Ui.add(l, cr, 8);
         l.addView(Ui.hint(this, "Sound and picture of a video line are cut on the phone from the video file (MP4 / MKV with AAC or Opus sound). Anything the phone cannot cut is left to the PC."));
+
+        l.addView(Ui.title(this, "Problem report"));
+        File last = new File(getFilesDir(), "crash-seen.txt");
+        l.addView(Ui.hint(this, last.isFile() ? "The last time something went wrong, the app saved what happened. Copy it and send it to get it fixed." : "Nothing has gone wrong so far."));
+        if (last.isFile()) Ui.add(l, Ui.button(this, "Show the report", v -> problemReport("Problem report", last)), 8);
         return Ui.scroll(this, l);
     }
 
@@ -410,11 +441,28 @@ public final class MainActivity extends Activity {
     private void addVideos(List<Uri> uris) {
         Ui.toast(this, "Copying…");
         app.bg(() -> {
+            List<String> names = new ArrayList<>();
+            for (Uri u : uris) names.add(nameOf(u).replaceAll("[\\\\/:*?\"<>|]", "_"));
+            // Subtitle files picked together with one video get its name (VIDEO.de.srt …), so they always belong to it.
+            String video = null;
+            int videos = 0;
+            for (String n : names) if (Player.isVideo(n)) { video = n; videos++; }
+            String stem = videos == 1 ? Player.niceName(new File(video)) : null;
+            List<String> used = new ArrayList<>();
             int n = 0;
             try {
-                for (Uri u : uris) {
-                    String name = nameOf(u).replaceAll("[\\\\/:*?\"<>|]", "_");
-                    try (InputStream in = getContentResolver().openInputStream(u); OutputStream out = new FileOutputStream(new File(app.videoDir(), name))) {
+                for (int k = 0; k < uris.size(); k++) {
+                    String name = names.get(k);
+                    if (stem != null && Player.isSub(name) && !name.toLowerCase(Locale.ROOT).startsWith(stem.toLowerCase(Locale.ROOT) + ".")) {
+                        String ext = name.substring(name.lastIndexOf('.')).toLowerCase(Locale.ROOT);
+                        String tag = Player.guessLang(name);
+                        String nn = stem + "." + tag + ext;
+                        for (int i = 2; used.contains(nn.toLowerCase(Locale.ROOT)) || new File(app.videoDir(), nn).exists() && !nn.equalsIgnoreCase(name); i++)
+                            nn = stem + "." + tag + i + ext;
+                        name = nn;
+                    }
+                    used.add(name.toLowerCase(Locale.ROOT));
+                    try (InputStream in = getContentResolver().openInputStream(uris.get(k)); OutputStream out = new FileOutputStream(new File(app.videoDir(), name))) {
                         byte[] buf = new byte[1 << 16];
                         int r;
                         while ((r = in.read(buf)) > 0) out.write(buf, 0, r);

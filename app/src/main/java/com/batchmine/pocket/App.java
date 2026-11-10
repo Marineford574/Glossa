@@ -28,7 +28,27 @@ public final class App extends Application {
     @Override public void onCreate() {
         super.onCreate();
         me = this;
+        Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            report("The app closed", e);
+            if (prev != null) prev.uncaughtException(t, e); else System.exit(2);
+        });
         dicts = new Dictionaries(new File(getFilesDir(), "dicts"));
+    }
+
+    /** Writes what went wrong to crash.txt; the home screen shows it (with a Copy button) the next time it opens. */
+    public void report(String what, Throwable e) {
+        try {
+            java.io.StringWriter sw = new java.io.StringWriter();
+            e.printStackTrace(new java.io.PrintWriter(sw));
+            String ver = "?";
+            try { ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception ignored) { }
+            String head = what + " · " + new java.util.Date() + " · app " + ver + " · " + android.os.Build.MANUFACTURER + " "
+                    + android.os.Build.MODEL + " · Android " + android.os.Build.VERSION.RELEASE + " (" + android.os.Build.VERSION.SDK_INT + ")\n";
+            File f = new File(getFilesDir(), "crash.txt");
+            String old = f.isFile() && f.length() < 40000 ? new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8) + "\n" : "";
+            java.nio.file.Files.write(f.toPath(), (old + head + sw).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Throwable ignored) { }
     }
 
     public SharedPreferences prefs() { return getSharedPreferences("pocket", MODE_PRIVATE); }
@@ -57,7 +77,16 @@ public final class App extends Application {
         return base;
     }
 
-    public void bg(Runnable r) { work.execute(r); }
+    /** Work off the screen's thread; a mistake in it is reported instead of closing the app. */
+    public void bg(Runnable r) {
+        work.execute(() -> {
+            try { r.run(); }
+            catch (Throwable e) {
+                report("Something went wrong (the app stayed open)", e);
+                post(() -> android.widget.Toast.makeText(this, "Something went wrong: " + e + " (details in Settings → Problem report)", android.widget.Toast.LENGTH_LONG).show());
+            }
+        });
+    }
 
     public void post(Runnable r) { ui.post(r); }
 }
