@@ -25,18 +25,25 @@ import java.util.Map;
 public final class Cards {
     private Cards() { }
 
+    public static final class Ctx {
+        public final String text; public final double start, end;
+        public Ctx(String text, double start, double end) { this.text = text; this.start = start; this.end = end; }
+    }
+
     public static final class Request {
         public String lang = "", kind = "text", word = "", surface = "", sentence = "", translation = "", ipa = "", title = "";
         public List<String> glosses = new ArrayList<>();
         public String defHtml = "", freq = "", wordAudio = "";   // all dictionaries' meanings (HTML), frequency rank, "yes": add the word spoken
         public String video = "", videoName = "";          // the video (a content:// or file:// link) and its file name
         public double start, end, frameAt = -1;
+        /** Lines around the sentence that the popup can add to it (nearest first); for a video each has its time. */
+        public List<Ctx> before = new ArrayList<>(), after = new ArrayList<>();
 
         public Request copy() {
             Request r = new Request();
             r.lang = lang; r.kind = kind; r.word = word; r.surface = surface; r.sentence = sentence; r.translation = translation;
             r.ipa = ipa; r.title = title; r.glosses = new ArrayList<>(glosses); r.video = video; r.videoName = videoName; r.defHtml = defHtml; r.freq = freq; r.wordAudio = wordAudio;
-            r.start = start; r.end = end; r.frameAt = frameAt;
+            r.start = start; r.end = end; r.frameAt = frameAt; r.before = before; r.after = after;
             return r;
         }
     }

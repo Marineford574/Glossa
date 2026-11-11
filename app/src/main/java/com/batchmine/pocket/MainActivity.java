@@ -79,6 +79,7 @@ public final class MainActivity extends Activity {
         root.addView(bar);
         setContentView(root);
         if (b != null) tab = b.getString("tab", "books");
+        sharedText(getIntent());
         File crash = new File(getFilesDir(), "crash.txt");
         if (crash.isFile()) {
             File seen = new File(getFilesDir(), "crash-seen.txt");
@@ -86,6 +87,29 @@ public final class MainActivity extends Activity {
             crash.renameTo(seen);
             problemReport("Something went wrong last time", seen);
         }
+    }
+
+    @Override protected void onNewIntent(Intent i) { super.onNewIntent(i); setIntent(i); sharedText(i); }
+
+    /** Text sent here from another app (selected text → Glossa, or Share): its first word is looked up, the text is the sentence. */
+    private void sharedText(Intent i) {
+        if (i == null) return;
+        CharSequence t = null;
+        if (Intent.ACTION_PROCESS_TEXT.equals(i.getAction())) t = i.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT);
+        else if (Intent.ACTION_SEND.equals(i.getAction())) t = i.getCharSequenceExtra(Intent.EXTRA_TEXT);
+        i.setAction(Intent.ACTION_MAIN);                           // handled once
+        if (t == null) return;
+        String text = t.toString().trim().replaceAll("\\s+", " ");
+        if (text.isEmpty() || text.length() > 2000) return;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("[\\p{L}][\\p{L}'’-]*").matcher(text);
+        if (!m.find()) return;
+        Cards.Request r = new Cards.Request();
+        r.lang = app.lang();
+        r.kind = "text";
+        r.sentence = text;
+        r.title = "shared text";
+        String w = m.group();
+        body.post(() -> WordSheet.show(this, app.lang(), w, r, this::show));
     }
 
     /** The saved report of a crash, to copy and send. */
@@ -465,6 +489,7 @@ public final class MainActivity extends Activity {
             Ui.add(l, Ui.item(this, d.title + " [" + d.lang + "]", d.summary(), v ->
                     Ui.dialog(this).setTitle(d.title).setItems(new String[]{"Delete this dictionary"}, (dl, i) -> { app.dicts.remove(d); show(); }).show()), 6);
         }
+        l.addView(Ui.hint(this, "Frequency lists (for example the Leipzig lists) can be imported the same way: the rank shows in the word popup and goes on the card. A list without a language is made for the language that is selected now."));
         Ui.add(l, Ui.primary(this, "Import a dictionary (.zip)", v -> pick(REQ_DICT, new String[]{"application/zip", "application/x-zip-compressed", "application/octet-stream"}, false)), 12);
 
         l.addView(Ui.title(this, "Cards"));
@@ -640,6 +665,11 @@ public final class MainActivity extends Activity {
         app.bg(() -> {
             try (InputStream in = getContentResolver().openInputStream(u)) {
                 File d = Dict.importZip(new java.io.BufferedInputStream(in, 1 << 16), app.dicts.root, (what, n) -> app.post(() -> msg.setText(what.equals("sorting") ? "Sorting… (nearly done)" : n + " entries read…")));
+                try {                                       // a dictionary that does not say which language it is for (a frequency list) is for this one
+                    File mf = new File(d, "meta.json");
+                    Map<String, Object> mm = Json.obj(Json.parse(new String(java.nio.file.Files.readAllBytes(mf.toPath()), java.nio.charset.StandardCharsets.UTF_8)));
+                    if (Json.str(mm.get("lang"), "").isEmpty()) { mm.put("lang", app.lang()); java.nio.file.Files.write(mf.toPath(), Json.write(mm).getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+                } catch (IOException | RuntimeException ignored) { }
                 app.dicts.reload();
                 app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.toast(this, "Imported " + d.getName()); show(); });
             } catch (IOException | RuntimeException e) {

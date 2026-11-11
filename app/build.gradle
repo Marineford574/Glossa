@@ -13,7 +13,7 @@ android {
         // On GitHub every build has its own number (the run number), so each one installs over the one before.
         def run = (System.getenv('GITHUB_RUN_NUMBER') ?: '0') as Integer
         versionCode 100 + run
-        versionName "1.4." + run
+        versionName "1.5." + run
         resValue 'string', 'update_repo', System.getenv('GITHUB_REPOSITORY') ?: ''
     }
 

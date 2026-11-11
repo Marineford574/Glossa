@@ -20,15 +20,26 @@
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:usesCleartextTraffic="true">
 
-        <activity android:name=".MainActivity" android:exported="true"
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- "Glossa" in the text-selection menu of any app, and Share → Glossa -->
+            <intent-filter android:label="Look up in Glossa">
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
         <activity android:name=".Reader" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
-        <activity android:name=".Player" android:exported="false" android:screenOrientation="sensorLandscape"
+        <activity android:name=".Player" android:exported="false" android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <provider android:name=".FilesProvider" android:authorities="com.batchmine.pocket.files"

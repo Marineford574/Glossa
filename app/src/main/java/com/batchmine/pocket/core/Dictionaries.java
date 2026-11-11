@@ -83,9 +83,14 @@ public final class Dictionaries {
     }
 
     /** The meanings of every dictionary that has the word, one block per dictionary: "Dictionary: 1. … 2. …" (HTML). */
-    public static String allMeanings(Result r) {
+    public static String allMeanings(Result r) { return allMeanings(r, null); }
+
+    /** Same, but only the entries whose number (position in r.hits) is in ONLY; null: all. */
+    public static String allMeanings(Result r, Set<Integer> only) {
         java.util.Map<String, List<String>> by = new LinkedHashMap<>();
-        for (Hit h : r.hits) {
+        for (int hi = 0; hi < r.hits.size(); hi++) {
+            if (only != null && !only.contains(hi)) continue;
+            Hit h = r.hits.get(hi);
             List<String> l = by.get(h.dict);
             if (l == null) by.put(h.dict, l = new ArrayList<>());
             for (String g : h.glosses) if (!g.isEmpty() && !l.contains(g)) l.add(g);

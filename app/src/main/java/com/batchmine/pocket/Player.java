@@ -152,7 +152,7 @@ public final class Player extends Activity {
         sr.addView(Ui.weight(seek, 1));
         ctl.addView(sr);
         LinearLayout br = Ui.row(this);
-        String[][] btns = {{"⏮", "prev"}, {"↺", "repeat"}, {"⏯", "play"}, {"⏭", "next"}, {"CC", "subs"}, {"Aa", "size"}};
+        String[][] btns = {{"⏮", "prev"}, {"↺", "repeat"}, {"⏯", "play"}, {"⏭", "next"}, {"CC", "subs"}, {"Aa", "size"}, {"⟳", "rotate"}};
         for (String[] bt : btns) {
             android.widget.Button bb = Ui.button(this, bt[0], v -> action(bt[1]));
             bb.setMinWidth(0);
@@ -171,7 +171,12 @@ public final class Player extends Activity {
         }
         ctl.addView(br2);
         root.addView(ctl, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
-        subs.setTranslationY(-Ui.dp(this, 0));
+        // the subtitles sit just above the controls, whatever the height of those is (taller on a phone held upright)
+        ctl.addOnLayoutChangeListener((vw, l, t, r, b, ol, ot, orr, ob) -> {
+            int want = (b - t) + Ui.dp(this, 6);
+            if (subs.getPaddingBottom() != want) subs.setPadding(subs.getPaddingLeft(), 0, subs.getPaddingRight(), want);
+        });
+
         setContentView(root);
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean user) { if (user) timeText.setText(Ui.time(p / 1000.0)); }
@@ -256,6 +261,10 @@ public final class Player extends Activity {
                 Ui.toast(this, autoPause ? "The video stops at the end of every line: press play for the next" : "Plays on");
                 break;
             case "delay": delayDialog(); break;
+            case "rotate":      // turn the picture by hand (the phone's own auto-rotate also works)
+                boolean port = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+                setRequestedOrientation(port ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
+                break;
             case "lines": linesDialog(); break;
             case "repeat": {
                 int i = Subs.around(main, t - delay);
@@ -396,6 +405,11 @@ public final class Player extends Activity {
         for (Subs.Cue x : second) if (x.start < c.end && x.end > c.start) { if (tr.length() > 0) tr.append(' '); tr.append(x.text.replace('\n', ' ')); }
         r.translation = tr.toString();
         r.frameAt = (c.start + c.end) / 2 + delay;
+        int ci = main.indexOf(c);
+        for (int k = 1; k <= 3 && ci >= 0; k++) {
+            if (ci - k >= 0) r.before.add(new Cards.Ctx(main.get(ci - k).text.replace('\n', ' '), main.get(ci - k).start + delay, main.get(ci - k).end + delay));
+            if (ci + k < main.size()) r.after.add(new Cards.Ctx(main.get(ci + k).text.replace('\n', ' '), main.get(ci + k).start + delay, main.get(ci + k).end + delay));
+        }
         WordSheet.show(this, lang, word, r, () -> { col.forget(); shown = -2; });
     }
 

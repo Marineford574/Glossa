@@ -47,4 +47,22 @@ final class Speak {
             tts[0].shutdown();
         }
     }
+
+    private static TextToSpeech live;
+    private static boolean liveReady;
+    private static String pendingText, pendingLang;
+
+    /** Says the text aloud now (the phone's voice); one voice engine is kept for the next time. */
+    static void say(Context c, String lang, String text) {
+        pendingText = text; pendingLang = lang;
+        if (live == null) {
+            live = new TextToSpeech(c.getApplicationContext(), st -> { liveReady = st == TextToSpeech.SUCCESS; if (liveReady) go(); });
+        } else if (liveReady) go();
+    }
+
+    private static void go() {
+        if (live.isLanguageAvailable(locale(pendingLang)) < TextToSpeech.LANG_AVAILABLE) return;
+        live.setLanguage(locale(pendingLang));
+        live.speak(pendingText, TextToSpeech.QUEUE_FLUSH, null, "say");
+    }
 }

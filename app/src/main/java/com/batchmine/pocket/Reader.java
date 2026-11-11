@@ -173,6 +173,18 @@ public final class Reader extends Activity {
         r.lang = book.lang.isEmpty() ? app.lang() : book.lang;
         r.kind = "text";
         r.sentence = Colourer.sentenceAt(text, at);
+        String[] sents = text.split("(?<=[.!?…])\\s+");
+        int si = -1, pos = 0;
+        for (int k = 0; k < sents.length; k++) {
+            int idx = text.indexOf(sents[k], pos);
+            if (idx < 0) continue;
+            pos = idx + sents[k].length();
+            if (at < pos && si < 0) si = k;
+        }
+        for (int k = 1; k <= 3 && si >= 0; k++) {
+            if (si - k >= 0) r.before.add(new Cards.Ctx(sents[si - k], 0, 0));
+            if (si + k < sents.length) r.after.add(new Cards.Ctx(sents[si + k], 0, 0));
+        }
         r.title = book.title;
         WordSheet.show(this, book.lang.isEmpty() ? app.lang() : book.lang, word, r, () -> draw(true));
     }
