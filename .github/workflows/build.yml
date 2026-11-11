@@ -4,11 +4,16 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Number of this build
+        run: echo "BUILD_CODE=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -30,5 +35,6 @@ jobs:
         with:
           tag_name: latest
           name: Glossa Pocket (latest)
+          body: build ${{ env.BUILD_CODE }}
           files: GlossaPocket.apk
         continue-on-error: true
