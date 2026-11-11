@@ -380,7 +380,7 @@ public final class MainActivity extends Activity {
         List<BookInfo> books = bookList(app.lang());
         shelf(l, "Books", books.size(), "books", () -> {
             List<View> out = new ArrayList<>();
-            for (BookInfo bk : books) out.add(cover(bk.title, bk.chapters + " ch.", v -> openBook(bk)));
+            for (BookInfo bk : books) out.add(cover(bk.title, Math.round(app.prefs().getFloat("rf_" + bk.id, 0) * 100) + "% · " + bk.chapters + " ch.", v -> openBook(bk), bookCover(bk.title, 92, 124)));
             return out;
         });
         File[] vs = vfs == null ? new File[0] : vfs.clone();
@@ -389,7 +389,7 @@ public final class MainActivity extends Activity {
             List<View> out = new ArrayList<>();
             for (File f : vs) {
                 float at = sp.getFloat("vpos_" + f.getName(), 0);
-                out.add(cover(Player.niceName(f), at > 5 ? "at " + Ui.time(at) : "not started", v -> openVideo(f)));
+                out.add(cover(Player.niceName(f), at > 5 ? "at " + Ui.time(at) : "not started", v -> openVideo(f), videoTile(f, 120, 68)));
             }
             return out;
         });
@@ -521,15 +521,55 @@ public final class MainActivity extends Activity {
         Ui.add(l, hs, 10);
     }
 
-    /** A small cover: a coloured block with the first letters, the title and one line under it. */
-    private View cover(String title, String sub, View.OnClickListener click) {
-        LinearLayout c = Ui.col(this);
-        TextView art = Ui.text(this, initials(title), 26, Ui.ON_ACC);
-        art.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        art.setGravity(Gravity.CENTER);
+    /** A book cover: a coloured block with a darker spine and the title on it (the PC shows the cover picture where the book has one). */
+    private View bookCover(String title, int wDp, int hDp) {
+        android.widget.FrameLayout f = new android.widget.FrameLayout(this);
         int h = Math.abs(title.hashCode());
-        art.setBackground(Ui.round(Ui.mix(Ui.ACCENT, (h & 1) == 0 ? Ui.BG : Ui.TEXT, 0.15f + (h % 5) * 0.08f), Ui.dp(this, Ui.RS)));
-        c.addView(art, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 92)));
+        int base = Ui.mix(Ui.ACCENT, (h & 1) == 0 ? Ui.BG : Ui.TEXT, 0.15f + (h % 5) * 0.08f);
+        f.setBackground(Ui.round(base, Ui.dp(this, 6)));
+        f.setClipToOutline(true);
+        View spine = new View(this);
+        spine.setBackgroundColor(Ui.mix(base, 0xFF000000, 0.28f));
+        f.addView(spine, new android.widget.FrameLayout.LayoutParams(Ui.dp(this, 6), -1, Gravity.START));
+        TextView t = Ui.text(this, title, wDp >= 100 ? 14 : 11, Ui.ON_ACC);
+        t.setTypeface(android.graphics.Typeface.create("serif", android.graphics.Typeface.BOLD));
+        t.setGravity(Gravity.CENTER);
+        t.setMaxLines(wDp >= 100 ? 5 : 4);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        t.setPadding(Ui.dp(this, 12), Ui.dp(this, 8), Ui.dp(this, 6), Ui.dp(this, 8));
+        f.addView(t, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        f.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, wDp), Ui.dp(this, hDp)));
+        return f;
+    }
+
+    /** A list row with a picture at its left: the row's own card background moves to the outside. */
+    private View withPicture(LinearLayout item, View picture) {
+        LinearLayout out = Ui.row(this);
+        out.setGravity(Gravity.CENTER_VERTICAL);
+        out.setBackground(item.getBackground());
+        item.setBackground(null);
+        out.setPadding(Ui.dp(this, 10), Ui.dp(this, 8), 0, Ui.dp(this, 8));
+        ((LinearLayout.LayoutParams) picture.getLayoutParams()).rightMargin = Ui.dp(this, 2);
+        out.addView(picture);
+        out.addView(item, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (item.hasOnClickListeners()) out.setOnClickListener(v -> item.performClick());
+        out.setOnLongClickListener(v -> item.performLongClick());
+        item.setClickable(false); item.setLongClickable(false);
+        return out;
+    }
+
+    /** A video's picture tile (a frame of it) at a size. */
+    private View videoTile(File f, int wDp, int hDp) {
+        float at = app.prefs().getFloat("vpos_" + f.getName(), 0), dur = app.prefs().getFloat("vdur_" + f.getName(), 0);
+        View t = Thumbs.tile(this, f, Player.niceName(f), watched(f) ? 1f : dur > 30 ? at / dur : 0f);
+        t.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, wDp), Ui.dp(this, hDp)));
+        return t;
+    }
+
+    /** A small cover: a coloured block with the first letters, the title and one line under it. */
+    private View cover(String title, String sub, View.OnClickListener click, View art) {
+        LinearLayout c = Ui.col(this);
+        c.addView(art);
         TextView tt = Ui.text(this, title, 13, Ui.TEXT);
         tt.setMaxLines(2);
         tt.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -539,6 +579,8 @@ public final class MainActivity extends Activity {
         c.setOnClickListener(click);
         return c;
     }
+
+    static String initialsOf(String s) { return initials(s); }
 
     private static String initials(String s) {
         StringBuilder b = new StringBuilder();
@@ -580,7 +622,7 @@ public final class MainActivity extends Activity {
             float frac = app.prefs().getFloat("rf_" + bk.id, 0);
             if (frac > 0.005f) { View pr = Ui.progress(this, frac); ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8); it.addView(pr); }
             it.setOnLongClickListener(v -> { bookMenu(bk); return true; });
-            Ui.add(l, it, 8);
+            Ui.add(l, withPicture(it, bookCover(bk.title, 54, 76)), 8);
         }
         return Ui.scroll(this, l);
     }
@@ -615,13 +657,8 @@ public final class MainActivity extends Activity {
         l.setPadding(pad, 0, pad, pad * 2);
         l.addView(backRow("Books", () -> { openBookId = null; show(); }));
         LinearLayout hero = Ui.card(this);
-        TextView art = Ui.text(this, initials(bk.title), 30, Ui.ON_ACC);
-        art.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        art.setGravity(Gravity.CENTER);
-        int h = Math.abs(bk.title.hashCode());
-        art.setBackground(Ui.round(Ui.mix(Ui.ACCENT, (h & 1) == 0 ? Ui.BG : Ui.TEXT, 0.15f + (h % 5) * 0.08f), Ui.dp(this, Ui.RS)));
         LinearLayout top = Ui.row(this);
-        top.addView(art, new LinearLayout.LayoutParams(Ui.dp(this, 76), Ui.dp(this, 100)));
+        top.addView(bookCover(bk.title, 84, 118));
         LinearLayout tx = Ui.col(this);
         tx.setPadding(Ui.dp(this, 14), 0, 0, 0);
         TextView tt = Ui.text(this, bk.title, 19, Ui.TEXT);
@@ -795,6 +832,7 @@ public final class MainActivity extends Activity {
     private String showName(List<File> eps) { return Shows.of(Player.videoName(eps.get(0))).show; }
 
     private View showCard(String key, List<File> eps) {
+        File nx0 = nextEpisode(eps);
         int done = 0;
         for (File f : eps) if (watched(f)) done++;
         File nx = nextEpisode(eps);
@@ -804,7 +842,9 @@ public final class MainActivity extends Activity {
         View pr = Ui.progress(this, done / (float) eps.size());
         ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8);
         it.addView(pr);
-        return it;
+        View t = Thumbs.tile(this, nx0, showName(eps), 0f);
+        t.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 104), Ui.dp(this, 58)));
+        return withPicture(it, t);
     }
 
     /** The page of one show: its episodes in order, the one to continue with, which are watched (like the PC's series page). */
@@ -836,7 +876,7 @@ public final class MainActivity extends Activity {
     }
 
     /** One video in a list. IN_SHOW: the episode number leads and watched ones are ticked. */
-    private LinearLayout videoItem(File f, boolean inShow) {
+    private View videoItem(File f, boolean inShow) {
         int subs = Player.subsOf(f).size();
         double at = app.prefs().getFloat("vpos_" + f.getName(), 0);
         boolean linked = f.getName().endsWith(".vlink");
@@ -847,8 +887,6 @@ public final class MainActivity extends Activity {
         String sub = (fsize < 0 ? "video not found (add it again)" : Ui.size(fsize) + (linked ? " (stays where it is)" : "")) + " · " + (subs == 0 ? "no subtitles" : subs + " subtitle file" + (subs > 1 ? "s" : ""))
                 + (done ? " · watched" : at > 5 ? " · at " + Ui.time(at) : "");
         LinearLayout it = Ui.item(this, head, sub, v -> openVideo(f));
-        float dur = app.prefs().getFloat("vdur_" + f.getName(), 0);
-        if (!done && at > 5 && dur > 30) { View pr = Ui.progress(this, (float) (at / dur)); ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8); it.addView(pr); }
         it.setOnLongClickListener(v -> {
             String[] acts = {done ? "Mark as not watched" : "Mark as watched", linked ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles"};
             Ui.dialog(this).setTitle(Player.niceName(f)).setItems(acts, (d, w) -> {
@@ -864,7 +902,7 @@ public final class MainActivity extends Activity {
             }).show();
             return true;
         });
-        return it;
+        return withPicture(it, videoTile(f, 104, 58));
     }
 
     /** Size of a video that is only linked; -1 when it is gone. */
@@ -1065,6 +1103,8 @@ public final class MainActivity extends Activity {
         g = Ui.group(this);
         Ui.pickRow(g, "Stopwatch: stops after", idleName(app.prefs().getInt("sw_idle_watch", 20)) + " (video)", v -> idlePick("sw_idle_watch"));
         Ui.pickRow(g, "Stopwatch: stops after", idleName(app.prefs().getInt("sw_idle_read", 90)) + " (book)", v -> idlePick("sw_idle_read"));
+        Ui.switchRow(g, "Video player held upright: video on top, lines below", "The picture sits at the top, the subtitle lines scroll underneath (the one being said is highlighted; tap a line to go there, a word for its card). Off: the picture fills the screen. Also the ⬒ button in the player.", app.prefs().getBoolean("player_stack", true),
+                (b, on) -> app.prefs().edit().putBoolean("player_stack", on).apply());
         Ui.switchRow(g, "Primed listening", "Each line: its translation first (paused), then you hear it without text, then the text shows", app.prefs().getBoolean("prime", false),
                 (b, on) -> app.prefs().edit().putBoolean("prime", on).apply());
         Ui.switchRow(g, "Primed listening: only lines with an unknown word", "The other lines just play", "unk".equals(app.prefs().getString("prime_when", "all")),

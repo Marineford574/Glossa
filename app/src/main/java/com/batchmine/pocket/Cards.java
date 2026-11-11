@@ -33,6 +33,8 @@ public final class Cards {
     public static final class Request {
         public String lang = "", kind = "text", word = "", surface = "", sentence = "", translation = "", ipa = "", title = "";
         public List<String> glosses = new ArrayList<>();
+        /** The single meanings ticked in the word card, by the language of the definitions (the PC's short definition fields). */
+        public Map<String, List<String>> picked = new LinkedHashMap<>();
         public String defHtml = "", freq = "", wordAudio = "";   // all dictionaries' meanings (HTML), frequency rank, "yes": add the word spoken
         public String video = "", videoName = "";          // the video (a content:// or file:// link) and its file name
         public double start, end, frameAt = -1;
@@ -42,7 +44,7 @@ public final class Cards {
         public Request copy() {
             Request r = new Request();
             r.lang = lang; r.kind = kind; r.word = word; r.surface = surface; r.sentence = sentence; r.translation = translation;
-            r.ipa = ipa; r.title = title; r.glosses = new ArrayList<>(glosses); r.video = video; r.videoName = videoName; r.defHtml = defHtml; r.freq = freq; r.wordAudio = wordAudio;
+            r.ipa = ipa; r.title = title; r.glosses = new ArrayList<>(glosses); r.picked = new LinkedHashMap<>(picked); r.video = video; r.videoName = videoName; r.defHtml = defHtml; r.freq = freq; r.wordAudio = wordAudio;
             r.start = start; r.end = end; r.frameAt = frameAt; r.before = before; r.after = after;
             return r;
         }
@@ -54,6 +56,7 @@ public final class Cards {
             {"sentence", "Sentence", "sentence|context|example|frase|satz|line"},
             {"translation", "Sentence translation", "translation|english|meaning of sentence|traduzione|übersetzung"},
             {"definition", "Definition", "definition|meaning|glossary|gloss|back|significato|bedeutung"},
+            {"short", "Short definition (the meanings you tick)", "short definition|definizione|definition 1|short|brief|kurz"},
             {"ipa", "Pronunciation (IPA)", "ipa|pronunciation|reading|pronuncia"},
             {"audio", "Sentence audio", "audio|sound|sentence audio|clip"},
             {"picture", "Picture", "picture|image|screenshot|immagine|bild"},
@@ -92,7 +95,10 @@ public final class Cards {
                 v.put("word", esc(r.word));
                 v.put("sentence", bold(r.sentence, r.surface.isEmpty() ? r.word : r.surface));
                 v.put("translation", esc(r.translation));
-                v.put("definition", r.defHtml.isEmpty() ? glossHtml(r.glosses) : r.defHtml);
+                List<String> chosen = new ArrayList<>();
+                for (List<String> l : r.picked.values()) chosen.addAll(l);
+                v.put("definition", !chosen.isEmpty() && !map.containsKey("short") ? glossHtml(chosen) : r.defHtml.isEmpty() ? glossHtml(r.glosses) : r.defHtml);
+                v.put("short", glossHtml(chosen));
                 v.put("frequency", esc(r.freq));
                 v.put("ipa", esc(r.ipa));
                 v.put("source", esc(r.title + (r.kind.equals("video") ? " " + Ui.time(r.start) : "")));
@@ -136,6 +142,7 @@ public final class Cards {
         c.put("sentence", r.sentence);
         c.put("translation", r.translation);
         c.put("title", r.title);
+        if (!r.picked.isEmpty()) c.put("defs", new LinkedHashMap<String, Object>(r.picked));   // the PC puts them in its short definition fields
         if (r.kind.equals("video")) {
             c.put("video", r.videoName);
             c.put("start", r.start);

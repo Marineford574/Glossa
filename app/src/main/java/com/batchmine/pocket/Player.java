@@ -45,6 +45,17 @@ public final class Player extends Activity {
     private boolean autoPause;
     private int pausedAt = -2;
     private android.widget.Button speedBtn, pauseBtn, markBtn;
+    private android.widget.ImageView playIcon;
+    // ---- the portrait layout: video on top, the lines of the subtitles scrolling below (Settings / the ⬒ button)
+    private boolean stacked;
+    private FrameLayout root, videoBox;
+    private LinearLayout ctl, subsBox;
+    private android.widget.ListView listView;
+    private LineAdapter adapter;
+    private int curLine = -1;
+    private long userScrolled;                           // when you last scrolled the list yourself (the list then stays put for a while)
+    private float listSp = 17;
+    private final java.util.Map<Integer, CharSequence> spanCache = new java.util.concurrent.ConcurrentHashMap<>();
     private boolean prime;                               // primed listening (Settings): a line's translation first, then the sound alone, then the text
     private int primeLine = -1;
     private String primePhase = "";                      // "read" (paused, translation) / "listen" (playing, no text) / ""
@@ -123,12 +134,27 @@ public final class Player extends Activity {
         lang = app.lang();
         col = new Colourer(lang);
         col.colours = app.prefs().getBoolean("colours", true);
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(0xFF000000);
         video = new VideoView(this);
-        root.addView(video, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        videoBox = new FrameLayout(this);
+        videoBox.setBackgroundColor(0xFF000000);
+        videoBox.addView(video, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        root.addView(videoBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        listView = new android.widget.ListView(this);
+        listView.setDivider(null);
+        listView.setVerticalScrollBarEnabled(false);
+        listView.setSelector(android.R.color.transparent);
+        listView.setOnScrollListener(new android.widget.AbsListView.OnScrollListener() {
+            @Override public void onScrollStateChanged(android.widget.AbsListView v, int st) { if (st != SCROLL_STATE_IDLE) userScrolled = System.currentTimeMillis(); }
+            @Override public void onScroll(android.widget.AbsListView v, int a, int b, int c) { }
+        });
+        adapter = new LineAdapter();
+        listView.setAdapter(adapter);
+        root.addView(listView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         video.setOnClickListener(v -> toggle());
         LinearLayout subs = Ui.col(this);
+        subsBox = subs;
         subs.setGravity(Gravity.CENTER_HORIZONTAL);
         subs.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 10), Ui.dp(this, 96));
         subText = Ui.text(this, "", 22, Ui.TEXT);
@@ -147,33 +173,54 @@ public final class Player extends Activity {
         subs.addView(trText);
         FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
         root.addView(subs, sp);
-        LinearLayout ctl = Ui.col(this);
+        ctl = Ui.col(this);
         ctl.setBackgroundColor(0xCC000000);
         ctl.setPadding(Ui.dp(this, 8), Ui.dp(this, 4), Ui.dp(this, 8), Ui.dp(this, 6));
         LinearLayout sr = Ui.row(this);
         timeText = Ui.text(this, "0:00", 13, Ui.TEXT);
         sr.addView(timeText);
         seek = new SeekBar(this);
+        seek.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
+        seek.setThumbTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
+        seek.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Ui.mix(Ui.BG, Ui.TEXT, 0.3f)));
         sr.addView(Ui.weight(seek, 1));
         ctl.addView(sr);
+        // the PC player's own icons (mine_gui_player.js): previous line, repeat, play / pause, next line, subtitles, size, turn
         LinearLayout br = Ui.row(this);
-        String[][] btns = {{"⏮", "prev"}, {"↺", "repeat"}, {"⏯", "play"}, {"⏭", "next"}, {"CC", "subs"}, {"Aa", "size"}, {"⟳", "rotate"}};
-        for (String[] bt : btns) {
-            android.widget.Button bb = Ui.button(this, bt[0], v -> action(bt[1]));
-            bb.setMinWidth(0);
-            bb.setPadding(0, 0, 0, 0);
-            br.addView(Ui.weight(bb, 1));
+        br.setGravity(Gravity.CENTER_VERTICAL);
+        int[] ics = {R.drawable.ic_pl_prev, R.drawable.ic_pl_repeat, R.drawable.ic_pl_play, R.drawable.ic_pl_next, R.drawable.ic_pl_cc, 0, R.drawable.ic_pl_fs};
+        String[] acts = {"prev", "repeat", "play", "next", "subs", "size", "rotate"};
+        String[] descr = {"Previous line", "Repeat this line", "Play / pause", "Next line", "Subtitle files", "Text size", "Turn the picture"};
+        for (int k = 0; k < acts.length; k++) {
+            final String act = acts[k];
+            View bb;
+            if (ics[k] == 0) {
+                TextView aa = Ui.text(this, "Aa", 17, Ui.TEXT);
+                aa.setGravity(Gravity.CENTER);
+                aa.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+                bb = aa;
+            } else {
+                android.widget.ImageView iv = Ui.icon(this, ics[k], 24, k == 2 ? Ui.ON_ACC : Ui.TEXT);
+                iv.setPadding(Ui.dp(this, 9), Ui.dp(this, 9), Ui.dp(this, 9), Ui.dp(this, 9));
+                if (k == 2) { playIcon = iv; iv.setBackground(Ui.press(Ui.ACCENT, 0, Ui.dp(this, 99))); }
+                bb = iv;
+            }
+            if (k != 2) bb.setBackground(Ui.press(0x00000000, 0, Ui.dp(this, 99)));
+            bb.setContentDescription(descr[k]);
+            bb.setOnClickListener(v -> action(act));
+            br.addView(bb, new LinearLayout.LayoutParams(0, Ui.dp(this, k == 2 ? 50 : 44), 1f));
         }
         ctl.addView(br);
         LinearLayout br2 = Ui.row(this);
-        speedBtn = Ui.button(this, "1×", v -> action("speed"));
-        pauseBtn = Ui.button(this, "Stop after line: off", v -> action("autopause"));
-        markBtn = Ui.button(this, "☆", v -> action("mark"));
-        for (android.widget.Button bb : new android.widget.Button[]{speedBtn, markBtn, Ui.button(this, "Sync ±", v -> action("delay")), pauseBtn, Ui.button(this, "Lines", v -> action("lines"))}) {
-            bb.setMinWidth(0);
-            bb.setPadding(0, 0, 0, 0);
+        speedBtn = Ui.small(this, "1×", v -> action("speed"));
+        pauseBtn = Ui.small(this, "Stop after line: off", v -> action("autopause"));
+        markBtn = Ui.small(this, "☆", v -> action("mark"));
+        for (android.widget.Button bb : new android.widget.Button[]{speedBtn, markBtn, Ui.small(this, "Sync ±", v -> action("delay")), pauseBtn, Ui.small(this, "Lines", v -> action("lines")), Ui.small(this, "⬒", v -> action("layout"))}) {
             bb.setTextSize(12);
-            br2.addView(Ui.weight(bb, 1));
+            bb.setPadding(Ui.dp(this, 4), 0, Ui.dp(this, 4), 0);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, bb == pauseBtn ? 2.2f : 1f);
+            lp.rightMargin = Ui.dp(this, 4);
+            br2.addView(bb, lp);
         }
         ctl.addView(br2);
         root.addView(ctl, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
@@ -181,9 +228,14 @@ public final class Player extends Activity {
         ctl.addOnLayoutChangeListener((vw, l, t, r, b, ol, ot, orr, ob) -> {
             int want = (b - t) + Ui.dp(this, 6);
             if (subs.getPaddingBottom() != want) subs.setPadding(subs.getPaddingLeft(), 0, subs.getPaddingRight(), want);
+            if (stacked) {                                   // the list starts right under the controls
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) listView.getLayoutParams();
+                if (lp.topMargin != b) { lp.topMargin = b; listView.setLayoutParams(lp); }
+            }
         });
 
         setContentView(root);
+        arrange();
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean user) { if (user) timeText.setText(Ui.time(p / 1000.0)); }
             @Override public void onStartTrackingTouch(SeekBar s) { dragging = true; }
@@ -234,6 +286,8 @@ public final class Player extends Activity {
         if (secName != null) { t = null; for (File f : subs) if (f.getName().equals(secName)) t = f; }
         main = read(a);
         second = t == null ? new ArrayList<>() : read(t);
+        spanCache.clear();
+        if (adapter != null) { arrange(); }
     }
 
     private List<Subs.Cue> read(File f) {
@@ -243,6 +297,105 @@ public final class Player extends Activity {
             Ui.toast(this, "Could not read " + f.getName());
             return new ArrayList<>();
         }
+    }
+
+    @Override public void onConfigurationChanged(android.content.res.Configuration c) {
+        super.onConfigurationChanged(c);
+        arrange();
+    }
+
+    /** Portrait and the option on: video on top, controls under it, the lines below. Otherwise the picture fills the screen with the subtitles over it. */
+    private void arrange() {
+        boolean port = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+        stacked = port && app.prefs().getBoolean("player_stack", true) && !main.isEmpty();
+        int w = getResources().getDisplayMetrics().widthPixels;
+        FrameLayout.LayoutParams vb = (FrameLayout.LayoutParams) videoBox.getLayoutParams();
+        FrameLayout.LayoutParams cl = (FrameLayout.LayoutParams) ctl.getLayoutParams();
+        if (stacked) {
+            root.setBackgroundColor(Ui.BG);
+            vb.height = w * 9 / 16; vb.gravity = Gravity.TOP;
+            cl.gravity = Gravity.TOP; cl.topMargin = vb.height;
+            ctl.setBackgroundColor(Ui.CARD);
+            FrameLayout.LayoutParams ll = (FrameLayout.LayoutParams) listView.getLayoutParams();
+            ll.topMargin = vb.height + Ui.dp(this, 96);
+            listView.setLayoutParams(ll);
+            listView.setVisibility(View.VISIBLE);
+            subsBox.setVisibility(View.GONE);
+        } else {
+            root.setBackgroundColor(0xFF000000);
+            vb.height = ViewGroup.LayoutParams.MATCH_PARENT; vb.gravity = Gravity.NO_GRAVITY;
+            cl.gravity = Gravity.BOTTOM; cl.topMargin = 0;
+            ctl.setBackgroundColor(0xCC000000);
+            listView.setVisibility(View.GONE);
+            subsBox.setVisibility(View.VISIBLE);
+        }
+        videoBox.setLayoutParams(vb);
+        ctl.setLayoutParams(cl);
+        shown = -2;                                          // draw the line where it belongs now
+        spanCache.clear();
+        if (adapter != null) adapter.notifyDataSetChanged();
+    }
+
+    /** The lines of the subtitles as a list: the line being said is highlighted and followed; a tap on a line goes there, a tap on a word opens its card. */
+    private final class LineAdapter extends android.widget.BaseAdapter {
+        @Override public int getCount() { return stacked ? main.size() : 0; }
+        @Override public Object getItem(int i) { return main.get(i); }
+        @Override public long getItemId(int i) { return i; }
+        @Override public View getView(int pos, View v, ViewGroup parent) {
+            LinearLayout row;
+            TextView time, tx, tr;
+            if (v == null) {
+                row = Ui.col(Player.this);
+                row.setPadding(Ui.dp(Player.this, 14), Ui.dp(Player.this, 9), Ui.dp(Player.this, 14), Ui.dp(Player.this, 9));
+                time = Ui.text(Player.this, "", 11, Ui.DIM);
+                tx = Ui.text(Player.this, "", listSp, Ui.TEXT);
+                tx.setMovementMethod(LinkMovementMethod.getInstance());
+                tx.setHighlightColor(0x553584E4);
+                tr = Ui.text(Player.this, "", Math.max(12, listSp - 3), Ui.DIM);
+                row.addView(time); row.addView(tx); row.addView(tr);
+            } else {
+                row = (LinearLayout) v;
+                time = (TextView) row.getChildAt(0); tx = (TextView) row.getChildAt(1); tr = (TextView) row.getChildAt(2);
+            }
+            Subs.Cue c = main.get(pos);
+            boolean cur = pos == curLine;
+            boolean primed = cur && prime && pos == primeLine && ("read".equals(primePhase) || "listen".equals(primePhase));
+            row.setBackground(cur ? Ui.round(Ui.mix(Ui.CARD, Ui.ACCENT, 0.22f), Ui.dp(Player.this, Ui.RS)) : null);
+            time.setText((Marks.isMarked(file.getName(), c.start) ? "★ " : "") + Ui.time(c.start));
+            time.setTextColor(cur ? Ui.ACCENT : Ui.DIM);
+            tx.setTextSize(listSp);
+            tx.setTextColor(cur ? Ui.TEXT : Ui.mix(Ui.BG, Ui.TEXT, 0.75f));
+            tr.setTextSize(Math.max(12, listSp - 3));
+            String t = trFor(c);
+            if (primed) {                                       // primed listening: the translation to read, the sound alone, then the text
+                tx.setText("· · ·");
+                tr.setText(t);
+                tr.setVisibility("read".equals(primePhase) && !t.isEmpty() ? View.VISIBLE : View.GONE);
+            } else {
+                CharSequence sp = spanCache.get(pos);
+                if (sp == null) {
+                    tx.setText(c.text);
+                    final int p = pos;
+                    app.bg(() -> {
+                        CharSequence cs = col.spans(c.text, (word, start, end, text) -> tapped(word, start, text, c));
+                        spanCache.put(p, cs);
+                        app.post(() -> { if (stacked && !isFinishing()) adapter.notifyDataSetChanged(); });
+                    });
+                } else tx.setText(sp);
+                tr.setText(t);
+                tr.setVisibility(t.isEmpty() ? View.GONE : View.VISIBLE);
+            }
+            View.OnClickListener go = x -> jump(pos);
+            row.setOnClickListener(go); time.setOnClickListener(go); tr.setOnClickListener(go); tx.setOnClickListener(go);
+            return row;
+        }
+    }
+
+    /** The list follows the line being said, unless you scrolled it yourself a moment ago. */
+    private void followLine(int i) {
+        curLine = i;
+        adapter.notifyDataSetChanged();
+        if (i >= 0 && System.currentTimeMillis() - userScrolled > 5000) listView.smoothScrollToPositionFromTop(i, Math.max(0, listView.getHeight() / 4), 250);
     }
 
     private void toggle() {
@@ -317,6 +470,13 @@ public final class Player extends Activity {
                 setRequestedOrientation(port ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
                 break;
             case "lines": linesDialog(); break;
+            case "layout": {                                 // portrait: video on top + lines below  <->  picture fills the screen
+                boolean on = !app.prefs().getBoolean("player_stack", true);
+                app.prefs().edit().putBoolean("player_stack", on).apply();
+                arrange();
+                Ui.toast(this, on ? "Video on top, the lines below (in portrait)" : "The picture fills the screen");
+                break;
+            }
             case "repeat": {
                 int i = Subs.around(main, t - delay);
                 if (i < 0) return;
@@ -332,6 +492,7 @@ public final class Player extends Activity {
             }
             case "subs": subsDialog(); break;
             case "size": {
+                if (stacked) { listSp = listSp >= 26 ? 14 : listSp + 3; adapter.notifyDataSetChanged(); break; }
                 float s = subText.getTextSize() / getResources().getDisplayMetrics().scaledDensity;
                 s = s >= 30 ? 16 : s + 4;
                 subText.setTextSize(s);
@@ -475,6 +636,7 @@ public final class Player extends Activity {
             int pos = video.getCurrentPosition();
             double t = pos / 1000.0;
             if (!dragging) { seek.setProgress(pos); timeText.setText(Ui.time(t)); }
+            if (playIcon != null) playIcon.setImageResource(video.isPlaying() ? R.drawable.ic_pl_pause : R.drawable.ic_pl_play);
             if (loopUntil > 0 && t >= loopUntil) {
                 if (loopLeft == 0 || --loopLeft > 0) video.seekTo((int) (Math.max(0, loopFrom) * 1000));
                 else loopUntil = -1;                           // played as often as asked: on with the film
@@ -491,6 +653,11 @@ public final class Player extends Activity {
     }
 
     private void showLine(int i) {
+        if (stacked) {
+            if (i >= 0) markBtn.setText(Marks.isMarked(file.getName(), main.get(i).start) ? "★" : "☆");
+            followLine(i);
+            return;
+        }
         if (i < 0) { subText.setVisibility(View.GONE); trText.setVisibility(View.GONE); return; }
         Subs.Cue c = main.get(i);
         markBtn.setText(Marks.isMarked(file.getName(), c.start) ? "★" : "☆");
@@ -533,7 +700,7 @@ public final class Player extends Activity {
             if (ci - k >= 0) r.before.add(new Cards.Ctx(main.get(ci - k).text.replace('\n', ' '), main.get(ci - k).start + delay, main.get(ci - k).end + delay));
             if (ci + k < main.size()) r.after.add(new Cards.Ctx(main.get(ci + k).text.replace('\n', ' '), main.get(ci + k).start + delay, main.get(ci + k).end + delay));
         }
-        WordSheet.show(this, lang, word, r, () -> { col.forget(); shown = -2; });
+        WordSheet.show(this, lang, word, r, () -> { col.forget(); spanCache.clear(); shown = -2; });
     }
 
     @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) { Stopwatch.active(); return super.dispatchTouchEvent(e); }

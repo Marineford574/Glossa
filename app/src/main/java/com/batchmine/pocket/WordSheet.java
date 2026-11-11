@@ -13,6 +13,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.batchmine.pocket.core.Dictionaries;
+import com.batchmine.pocket.core.Json;
 import com.batchmine.pocket.core.WordStore;
 
 import java.util.Collections;
@@ -50,11 +51,25 @@ public final class WordSheet {
     /** What the web page's tick boxes report: the numbers of the entries to put on the card. */
     private static final class Picks {
         volatile java.util.Set<Integer> set = new java.util.TreeSet<>();
+        /** The single meanings ticked (as on the PC): [{e: entry, l: language of the definitions, t: text}]. */
+        volatile java.util.List<Object> defs = new java.util.ArrayList<>();
         @android.webkit.JavascriptInterface public void picks(String csv) {
             java.util.Set<Integer> n = new java.util.TreeSet<>();
             for (String x : csv.split(",")) try { n.add(Integer.parseInt(x.trim())); } catch (NumberFormatException ignored) { }
             set = n;
         }
+        @android.webkit.JavascriptInterface public void defs(String json) {
+            try { defs = Json.arr(Json.parse(json)); } catch (RuntimeException ignored) { }
+        }
+    }
+
+    /** The language the definitions of a dictionary are written in, from its name ("wty-it-en", "kaikki it-de"): the PC files the
+     *  ticked meanings under it (the short definition field of that language). Same language as the words if the name says nothing. */
+    static String glossLang(String dict, String lang) {
+        String[] t = (dict == null ? "" : dict).split("[^A-Za-z]+");
+        for (int i = 0; i + 1 < t.length; i++)
+            if (t[i].equalsIgnoreCase(lang) && t[i + 1].length() >= 2 && t[i + 1].length() <= 3) return t[i + 1].toLowerCase(java.util.Locale.ROOT);
+        return lang;
     }
 
     public static void show(Activity a, String lang, String word0, Cards.Request base, Changed onChange) {
@@ -228,6 +243,15 @@ public final class WordSheet {
                 java.util.Set<Integer> only = picks.set;
                 for (int k = 0; k < res[0].hits.size(); k++) if (only.contains(k)) { r.glosses = res[0].hits.get(k).glosses; break; }
                 r.defHtml = Dictionaries.allMeanings(res[0], only);
+                r.picked = new java.util.LinkedHashMap<>();                 // the single meanings ticked: the short definition
+                for (Object o : picks.defs) {
+                    Map<String, Object> x = Json.obj(o);
+                    String t = Json.str(x.get("t"), "").trim(), l = Json.str(x.get("l"), lang);
+                    if (t.isEmpty()) continue;
+                    java.util.List<String> lst = r.picked.get(l);
+                    if (lst == null) r.picked.put(l, lst = new java.util.ArrayList<>());
+                    if (!lst.contains(t) && lst.size() < 12) lst.add(t);
+                }
                 if (res[0].freq > 0) r.freq = String.valueOf(res[0].freq);
                 r.ipa = res[0].ipa.isEmpty() ? "" : res[0].ipa.values().iterator().next();
             }
@@ -246,11 +270,12 @@ public final class WordSheet {
             app.bg(() -> {
                 Dictionaries.Result r = app.dicts.lookup(wd, lang);
                 ws.lookedUp(r.found() ? r.lemma() : wd);
-                String html = page(r, app.dicts.styles(lang), app.dicts.hasTerms(lang));
+                String html = page(r, app.dicts.styles(lang), app.dicts.hasTerms(lang), lang);
                 app.post(() -> {
                     if (!wd.equals(word[0])) return;                 // another word was typed meanwhile
                     res[0] = r;
                     picks.set = firstDictionary(r);
+                    picks.defs = new java.util.ArrayList<>();
                     meta.removeAllViews();
                     if (r.found() && !r.lemma().equalsIgnoreCase(wd)) meta.addView(chip(a, "→ " + r.lemma()));
                     for (String ipa : r.ipa.values()) { meta.addView(chip(a, ipa)); break; }
@@ -279,7 +304,9 @@ public final class WordSheet {
         return s;
     }
 
-    static String page(Dictionaries.Result r, String css, boolean haveDicts) {
+    static String page(Dictionaries.Result r, String css, boolean haveDicts) { return page(r, css, haveDicts, ""); }
+
+    static String page(Dictionaries.Result r, String css, boolean haveDicts, String lang) {
         StringBuilder sb = new StringBuilder();
         java.util.Set<Integer> on = firstDictionary(r);
         sb.append("<html><head><meta name=viewport content='width=device-width, initial-scale=1'><style>")
@@ -288,8 +315,23 @@ public final class WordSheet {
           .append(".hd input{width:22px;height:22px;flex:none;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}.blk{border-top:1px solid ").append(Ui.hex(Ui.LINE)).append(";margin-top:6px}")
           .append(".via{color:").append(Ui.hex(Ui.DIM)).append(";font-size:13px;margin-bottom:4px}ol{padding-left:22px;margin:4px 0}summary{color:").append(Ui.hex(Ui.DIM)).append(";cursor:pointer}")
           .append("details{margin:2px 0}.none{color:").append(Ui.hex(Ui.DIM)).append(";margin-top:20px}")
+          // the single meanings, each with its own tick box (the PC's .gpick): tap a meaning to put it on the card
+          .append("input.gpick{width:19px;height:19px;margin:0 7px 0 0;vertical-align:-4px;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}")
+          .append("li.gli{border-radius:7px;padding:2px 4px;margin:1px -4px}li.gli.picked{background:").append(Ui.hex(Ui.mix(Ui.CARD, Ui.ACCENT, 0.2f))).append("}")
+          .append(".gnote{font-size:12.5px;color:").append(Ui.hex(Ui.DIM)).append(";margin:6px 0 2px}")
           .append(css == null ? "" : css)
-          .append("</style><script>function pick(){var a=[];document.querySelectorAll('input.pk').forEach(function(x){if(x.checked)a.push(x.getAttribute('data-i'))});Android.picks(a.join(','))}</script></head><body>");
+          .append("</style><script>")
+          .append("function pick(){var a=[];document.querySelectorAll('input.pk').forEach(function(x){if(x.checked)a.push(x.getAttribute('data-i'))});Android.picks(a.join(','))}")
+          // every meaning (a list item with text of its own, examples and sub-lists left out) gets a tick box, as in the PC's word card
+          .append("function own(li){var c=li.cloneNode(true);c.querySelectorAll('ol,ul,details,input,[data-sc-content*=example],[data-sc-content*=notes],[data-sc-content*=info]').forEach(function(x){x.remove()});return c.textContent.replace(/\\s+/g,' ').trim()}")
+          .append("function defs(){var a=[];document.querySelectorAll('input.gpick:checked').forEach(function(x){a.push({e:+x.dataset.e,l:x.dataset.l,t:x.dataset.t})});Android.defs(JSON.stringify(a))}")
+          .append("function boxes(){var n=0;document.querySelectorAll('.blk').forEach(function(b){var e=b.getAttribute('data-i'),l=b.getAttribute('data-l');b.querySelectorAll('li').forEach(function(li){var t=own(li);if(!t||t.length>600)return;")
+          .append("var x=document.createElement('input');x.type='checkbox';x.className='gpick';x.dataset.e=e;x.dataset.l=l;x.dataset.t=t;li.classList.add('gli');li.insertBefore(x,li.firstChild);n++;")
+          .append("x.addEventListener('change',function(){li.classList.toggle('picked',x.checked);if(x.checked){var pk=b.querySelector('input.pk');if(pk&&!pk.checked){pk.checked=true;pick()}}defs()});")
+          .append("li.addEventListener('click',function(ev){if(ev.target.closest('a,summary,input,details>:not(summary)'))return;if(ev.target.closest('li')!==li)return;x.checked=!x.checked;x.dispatchEvent(new Event('change'))})})});")
+          .append("if(n){var g=document.createElement('div');g.className='gnote';g.textContent='Tick the meanings you want: they go into the short definition field; the ticked dictionaries still give the full definition.';document.body.insertBefore(g,document.body.firstChild)}}")
+          .append("document.addEventListener('DOMContentLoaded',boxes)")
+          .append("</script></head><body>");
         if (!r.found()) {
             sb.append("<div class=none>").append(haveDicts ? "No entry for this word in your dictionaries." :
                     "No dictionary yet: Settings → Dictionaries → Import a dictionary (the same wty zip files the PC uses).").append("</div>");
@@ -298,7 +340,7 @@ public final class WordSheet {
         int i = 0;
         for (Dictionaries.Hit h : r.hits) {
             String key = h.term + "|" + h.via;
-            sb.append("<div class=blk><div class=hd><input class=pk type=checkbox data-i=").append(i).append(on.contains(i) ? " checked" : "")
+            sb.append("<div class=blk data-i=").append(i).append(" data-l='").append(esc(glossLang(h.dict, lang))).append("'><div class=hd><input class=pk type=checkbox data-i=").append(i).append(on.contains(i) ? " checked" : "")
               .append(" onchange='pick()'><span>").append(esc(h.term)).append(" <small>").append(esc(h.pos)).append(" · ").append(esc(h.dict)).append("</small></span></div>");
             if (h.via != null && !key.equals(last)) sb.append("<div class=via>").append(esc(h.via)).append("</div>");
             last = key;
