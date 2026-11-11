@@ -50,6 +50,14 @@ public final class Ui {
             {"dim", "Classic dim", "#1c1c1f", "#26262b", "#303036", "#e7e7ea", "#9a9aa3", "#3d7bd6", "#ffffff", "0"},
             {"light", "Classic light", "#fbfbfc", "#ffffff", "#ececef", "#1e1f24", "#5d5f66", "#2f6fcb", "#ffffff", "1"}};
 
+    /** The accent colours that can be put over any theme (the same as on the PC); "" = the theme's own. */
+    public static final String[][] ACCENTS = {{"Theme colour", ""}, {"Blue", "#4f8ff7"}, {"Violet", "#9b7bff"}, {"Pink", "#f0509a"}, {"Coral", "#ff6b5a"}, {"Amber", "#f2a516"}, {"Green", "#2fbf71"}, {"Teal", "#14b8c4"}};
+
+    public static String accentName(String hex) {
+        for (String[] a : ACCENTS) if (a[1].equalsIgnoreCase(hex == null ? "" : hex)) return a[0];
+        return hex;
+    }
+
     public static String themeName(String id) {
         for (String[] t : THEMES) if (t[0].equals(id)) return t[1];
         return id;
@@ -71,6 +79,12 @@ public final class Ui {
         try {
             BG = col(t[2]); CARD = col(t[3]); CARD2 = col(t[4]); TEXT = col(t[5]); DIM = col(t[6]); ACCENT = col(t[7]); ON_ACC = col(t[8]); LIGHT = "1".equals(t[9]);
             LINE = mix(TEXT, BG, 0.86f);
+            String a = sp.getString("accent", "");
+            if (a.matches("#[0-9a-fA-F]{6}")) {                     // an accent of the phone's own over the theme
+                ACCENT = col(a);
+                double lum = (0.299 * Color.red(ACCENT) + 0.587 * Color.green(ACCENT) + 0.114 * Color.blue(ACCENT)) / 255;
+                ON_ACC = lum > 0.6 ? 0xFF111111 : 0xFFFFFFFF;
+            }
         } catch (RuntimeException ignored) { }
     }
 
@@ -204,6 +218,31 @@ public final class Ui {
         if (sub != null && sub.length() > 0) v.addView(text(c, sub, 13, DIM));
         if (l != null) { v.setOnClickListener(l); v.setClickable(true); }
         return v;
+    }
+
+    /** A thin bar showing how far along something is (0..1). */
+    public static View progress(Context c, float f) {
+        android.widget.FrameLayout fr = new android.widget.FrameLayout(c);
+        fr.setBackground(round(mix(CARD, TEXT, 0.12f), dp(c, 2)));
+        View in = new View(c);
+        in.setBackground(round(ACCENT, dp(c, 2)));
+        fr.addView(in, new android.widget.FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT));
+        fr.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            int w = Math.round((r - l) * Math.max(0, Math.min(1, f)));
+            if (in.getLayoutParams().width != w) { in.getLayoutParams().width = w; in.post(in::requestLayout); }
+        });
+        fr.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(c, 4)));
+        return fr;
+    }
+
+    /** "5 min ago", "3 h ago", "yesterday", "4 days ago". */
+    public static String ago(long t) {
+        long s = Math.max(0, (System.currentTimeMillis() - t) / 1000);
+        if (s < 90) return "just now";
+        if (s < 3600) return (s / 60) + " min ago";
+        if (s < 86400) return (s / 3600) + " h ago";
+        if (s < 2 * 86400) return "yesterday";
+        return (s / 86400) + " days ago";
     }
 
     public static LinearLayout.LayoutParams lp(Context c, int w, int h, int marginBottomDp) {

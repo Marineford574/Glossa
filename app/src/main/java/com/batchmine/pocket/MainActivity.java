@@ -34,13 +34,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** The home screen: Books, Videos, Words and Settings, with the language and the sync button on top. */
+/** The main screen: Home (continue, shelves), Books, Videos, Words and Settings, with the language and the sync button on top. */
 public final class MainActivity extends Activity {
     static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3;
     private App app;
     private FrameLayout body;
     private TextView langBtn, status;
-    private String tab = "books";
+    private String tab = "home";
     private static volatile boolean syncing;
     private final List<TextView> tabs = new ArrayList<>();
 
@@ -68,7 +68,7 @@ public final class MainActivity extends Activity {
         root.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         LinearLayout bar = Ui.row(this);
         bar.setBackgroundColor(Ui.CARD);
-        for (String[] t : new String[][]{{"books", "Books"}, {"videos", "Videos"}, {"words", "Words"}, {"settings", "Settings"}}) {
+        for (String[] t : new String[][]{{"home", "Home"}, {"books", "Books"}, {"videos", "Videos"}, {"words", "Words"}, {"settings", "Settings"}}) {
             TextView v = Ui.text(this, t[1], 14, Ui.DIM);
             v.setGravity(Gravity.CENTER);
             v.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 14));
@@ -79,7 +79,7 @@ public final class MainActivity extends Activity {
         }
         root.addView(bar);
         setContentView(root);
-        if (b != null) tab = b.getString("tab", "books");
+        if (b != null) tab = b.getString("tab", "home");
         sharedText(getIntent());
         File crash = new File(getFilesDir(), "crash.txt");
         if (crash.isFile()) {
@@ -156,7 +156,8 @@ public final class MainActivity extends Activity {
             case "videos": v = videos(); break;
             case "words": v = words(); break;
             case "settings": v = settings(); break;
-            default: v = books();
+            case "books": v = books(); break;
+            default: v = home();
         }
         body.addView(v);
     }
@@ -215,7 +216,8 @@ public final class MainActivity extends Activity {
             }
 
             @Override public void apply(Map<String, Object> pulled) {
-                if (Ui.setPcLook(MainActivity.this, Json.obj(pulled.get("look")))) runOnUiThread(() -> recreate());      // the PC's theme changed: the screens are built again
+                if (Ui.setPcLook(MainActivity.this, Json.obj(pulled.get("look")))) runOnUiThread(() -> recreate());
+                Icons.followPc(MainActivity.this, Json.str(Json.obj(pulled.get("look")).get("icon"), ""));      // the PC's theme changed: the screens are built again
                 android.content.SharedPreferences sp = app.prefs();
                 android.content.SharedPreferences.Editor ed = sp.edit();
                 File[] vs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
@@ -251,6 +253,144 @@ public final class MainActivity extends Activity {
             return "The PC did not answer. Is it on, with Glossa running and Phone access switched on, and is the phone on the same Wi-Fi (or Tailscale)?\n\n" + m;
         return m;
     }
+
+    // ================================================================ home
+    /** Like Home on the PC: what you were in the middle of, a few numbers, and the shelves of books and videos. */
+    private View home() {
+        LinearLayout l = Ui.col(this);
+        int pad = Ui.dp(this, 12);
+        l.setPadding(pad, 0, pad, pad);
+        android.content.SharedPreferences sp = app.prefs();
+        WordStore ws = app.store();
+
+        // three numbers; a tap goes to Words
+        LinearLayout nums = Ui.row(this);
+        int[] vals = {ws.knownCount(), ws.pending().size(), ws.saved().size()};
+        String[] labels = {"known words", "cards waiting", "saved words"};
+        for (int i = 0; i < 3; i++) {
+            LinearLayout t = Ui.col(this);
+            t.setPadding(Ui.dp(this, 12), Ui.dp(this, 10), Ui.dp(this, 12), Ui.dp(this, 10));
+            t.setBackground(Ui.round(Ui.CARD, Ui.dp(this, 14)));
+            TextView n = Ui.text(this, String.valueOf(vals[i]), 22, i == 1 && vals[i] > 0 ? Ui.ACCENT : Ui.TEXT);
+            n.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            t.addView(n);
+            t.addView(Ui.text(this, labels[i], 12, Ui.DIM));
+            t.setOnClickListener(v -> { tab = "words"; show(); });
+            nums.addView(Ui.weight(t, 1));
+        }
+        Ui.add(l, nums, 14);
+        if (app.pc() == null) {
+            Ui.add(l, Ui.item(this, "Link the PC", "Paste the link from Glossa on the PC (Settings → Phone access) to exchange words, cards and where you stopped.", v -> { tab = "settings"; show(); }), 14);
+        }
+
+        // continue: the videos and books touched last, newest first
+        List<Object[]> recent = new ArrayList<>();          // {time, view}
+        File[] vfs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+        if (vfs != null) for (File f : vfs) {
+            long t = sp.getLong("vpost_" + f.getName(), 0);
+            float at = sp.getFloat("vpos_" + f.getName(), 0);
+            if (t <= 0 || at < 5) continue;
+            LinearLayout it = Ui.item(this, "▶  " + Player.niceName(f), "at " + Ui.time(at) + " · " + Ui.ago(t), v -> openVideo(f));
+            recent.add(new Object[]{t, it});
+        }
+        for (BookInfo bk : bookList(app.lang())) {
+            long t = sp.getLong("rt_" + bk.id, 0);
+            if (t <= 0) continue;
+            float frac = sp.getFloat("rf_" + bk.id, 0);
+            int[] pos = Reader.position(bk.id);
+            LinearLayout it = Ui.item(this, "📖  " + bk.title, "chapter " + (pos[0] + 1) + " of " + bk.chapters + " · " + Math.round(frac * 100) + "% · " + Ui.ago(t), v -> openBook(bk));
+            View pr = Ui.progress(this, frac);
+            ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8);
+            it.addView(pr);
+            recent.add(new Object[]{t, it});
+        }
+        recent.sort((a, b) -> Long.compare((Long) b[0], (Long) a[0]));
+        l.addView(Ui.title(this, "Continue"));
+        if (recent.isEmpty()) l.addView(Ui.hint(this, "Open a book or a video and it waits here, at the place you stopped."));
+        for (int i = 0; i < Math.min(4, recent.size()); i++) {
+            View it = (View) recent.get(i)[1];
+            if (i == 0) it.setBackground(Ui.round(Ui.mix(Ui.CARD, Ui.ACCENT, 0.16f), Ui.dp(this, 14)));
+            Ui.add(l, it, 8);
+        }
+
+        // shelves
+        List<BookInfo> books = bookList(app.lang());
+        shelf(l, "Books", books.size(), "books", () -> {
+            List<View> out = new ArrayList<>();
+            for (BookInfo bk : books) out.add(cover(bk.title, bk.chapters + " ch.", v -> openBook(bk)));
+            return out;
+        });
+        File[] vs = vfs == null ? new File[0] : vfs.clone();
+        Arrays.sort(vs, (a, b) -> Long.compare(sp.getLong("vpost_" + b.getName(), b.lastModified()), sp.getLong("vpost_" + a.getName(), a.lastModified())));
+        shelf(l, "Videos", vs.length, "videos", () -> {
+            List<View> out = new ArrayList<>();
+            for (File f : vs) {
+                float at = sp.getFloat("vpos_" + f.getName(), 0);
+                out.add(cover(Player.niceName(f), at > 5 ? "at " + Ui.time(at) : "not started", v -> openVideo(f)));
+            }
+            return out;
+        });
+        return Ui.scroll(this, l);
+    }
+
+    private interface Covers { List<View> make(); }
+
+    /** A row of covers that scrolls sideways, with "All →" going to the tab. */
+    private void shelf(LinearLayout l, String name, int count, String toTab, Covers covers) {
+        LinearLayout head = Ui.row(this);
+        TextView t = Ui.title(this, name);
+        head.addView(Ui.weight(t, 1));
+        TextView all = Ui.text(this, count == 0 ? "Add →" : "All " + count + " →", 14, Ui.ACCENT);
+        all.setPadding(Ui.dp(this, 8), Ui.dp(this, 8), 0, Ui.dp(this, 8));
+        all.setOnClickListener(v -> { tab = toTab; show(); });
+        head.addView(all);
+        Ui.add(l, head, 0);
+        if (count == 0) { l.addView(Ui.hint(this, "books".equals(toTab) ? "No books in this language yet." : "No videos yet.")); return; }
+        LinearLayout row = Ui.row(this);
+        row.setGravity(Gravity.TOP);
+        List<View> cs = covers.make();
+        for (int i = 0; i < Math.min(10, cs.size()); i++) {
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(Ui.dp(this, 120), ViewGroup.LayoutParams.WRAP_CONTENT);
+            p.rightMargin = Ui.dp(this, 10);
+            row.addView(cs.get(i), p);
+        }
+        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        hs.addView(row);
+        Ui.add(l, hs, 10);
+    }
+
+    /** A small cover: a coloured block with the first letters, the title and one line under it. */
+    private View cover(String title, String sub, View.OnClickListener click) {
+        LinearLayout c = Ui.col(this);
+        TextView art = Ui.text(this, initials(title), 26, Ui.ON_ACC);
+        art.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        art.setGravity(Gravity.CENTER);
+        int h = Math.abs(title.hashCode());
+        art.setBackground(Ui.round(Ui.mix(Ui.ACCENT, (h & 1) == 0 ? Ui.BG : Ui.TEXT, 0.15f + (h % 5) * 0.08f), Ui.dp(this, 12)));
+        c.addView(art, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 92)));
+        TextView tt = Ui.text(this, title, 13, Ui.TEXT);
+        tt.setMaxLines(2);
+        tt.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        tt.setPadding(0, Ui.dp(this, 6), 0, 0);
+        c.addView(tt);
+        c.addView(Ui.text(this, sub, 11, Ui.DIM));
+        c.setOnClickListener(click);
+        return c;
+    }
+
+    private static String initials(String s) {
+        StringBuilder b = new StringBuilder();
+        for (String w : s.replaceAll("[^\\p{L}\\p{N} ]", " ").trim().split("\\s+")) {
+            if (w.isEmpty()) continue;
+            b.appendCodePoint(Character.toUpperCase(w.codePointAt(0)));
+            if (b.length() >= 2) break;
+        }
+        return b.length() == 0 ? "?" : b.toString();
+    }
+
+    private void openVideo(File f) { Intent i = new Intent(this, Player.class); i.putExtra("path", f.getPath()); startActivity(i); }
+    private void openBook(BookInfo bk) { Intent i = new Intent(this, Reader.class); i.putExtra("id", bk.id); startActivity(i); }
 
     // ================================================================ books
     private View books() {
@@ -496,6 +636,31 @@ public final class MainActivity extends Activity {
                 app.prefs().edit().putString("theme", i == 0 ? "pc" : Ui.THEMES[i - 1][0]).apply();
                 Ui.load(this);
                 recreate();
+            }).show();
+        }), 12);
+
+        String acc = app.prefs().getString("accent", "");
+        Ui.add(l, Ui.item(this, "Accent colour", acc.isEmpty() ? "The theme's own" : Ui.accentName(acc), v -> {
+            String[] names = new String[Ui.ACCENTS.length];
+            for (int i = 0; i < names.length; i++) names[i] = Ui.ACCENTS[i][0];
+            Ui.dialog(this).setTitle("Accent colour").setItems(names, (dl, i) -> {
+                app.prefs().edit().putString("accent", Ui.ACCENTS[i][1]).apply();
+                Ui.load(this);
+                recreate();
+            }).show();
+        }), 12);
+
+        String ic = app.prefs().getString("icon", "original");
+        Ui.add(l, Ui.item(this, "App icon", "pc".equals(ic) ? "Same as on the PC (now: " + Icons.name(Icons.current(this)) + ")" : Icons.name(ic), v -> {
+            String[] names = new String[Icons.ALL.length + 1];
+            names[0] = "Same as on the PC";
+            for (int i = 0; i < Icons.ALL.length; i++) names[i + 1] = Icons.ALL[i][1];
+            Ui.dialog(this).setTitle("App icon").setItems(names, (dl, i) -> {
+                String id = i == 0 ? "pc" : Icons.ALL[i - 1][0];
+                app.prefs().edit().putString("icon", id).apply();
+                if (i == 0) Ui.toast(this, "The icon follows the PC from the next sync");
+                else { Icons.apply(this, id); Ui.toast(this, "The launcher shows the new icon in a moment. A shortcut on the home screen may need adding again."); }
+                show();
             }).show();
         }), 12);
 

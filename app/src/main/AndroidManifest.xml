@@ -22,10 +22,6 @@
 
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
             <!-- "Glossa" in the text-selection menu of any app, and Share → Glossa -->
             <intent-filter android:label="Look up in Glossa">
                 <action android:name="android.intent.action.PROCESS_TEXT" />
@@ -38,6 +34,105 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+        <!-- The icon on the launcher: one of these is switched on (Settings → Look → App icon); Icons.java switches them. -->
+        <activity-alias android:name=".Launch" android:targetActivity=".MainActivity" android:exported="true" android:enabled="true"
+            android:icon="@drawable/ic_launcher" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_illuminated" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_illuminated_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_oldgold" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_oldgold_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_swashred" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_swashred_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_cooknight" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_cooknight_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_gaira" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_gaira_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_gairared" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_gairared_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_glagring" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_glagring_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_baska" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_baska_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_sahovnica" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_sahovnica_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_hrvatska" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_hrvatska_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_gammaclassic" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_gammaclassic_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_gammalambda" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_gammalambda_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".Launch_georgian" android:targetActivity=".MainActivity" android:exported="true" android:enabled="false"
+            android:icon="@mipmap/ic_g_georgian_a" android:label="Glossa Pocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
         <activity android:name=".Reader" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity android:name=".Player" android:exported="false" android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|keyboardHidden" />
