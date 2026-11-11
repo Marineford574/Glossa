@@ -102,6 +102,8 @@ public final class WordSheet {
             r.word = res[0] == null ? word.toLowerCase() : res[0].lemma();
             if (res[0] != null) {
                 if (!res[0].hits.isEmpty()) r.glosses = res[0].hits.get(0).glosses;
+                r.defHtml = Dictionaries.allMeanings(res[0]);
+                if (res[0].freq > 0) r.freq = String.valueOf(res[0].freq);
                 r.ipa = res[0].ipa.isEmpty() ? "" : res[0].ipa.values().iterator().next();
             }
             d.dismiss();
@@ -119,6 +121,7 @@ public final class WordSheet {
                 StringBuilder s = new StringBuilder();
                 if (r.found() && !r.lemma().equalsIgnoreCase(word)) s.append("→ ").append(r.lemma());
                 for (String ipa : r.ipa.values()) { if (s.length() > 0) s.append("   "); s.append(ipa); break; }
+                if (r.freq > 0) { if (s.length() > 0) s.append("   "); s.append("#").append(r.freq); }
                 sub.setText(s.length() > 0 ? s : r.found() ? "" : "not in your dictionaries");
                 if (webF != null) webF.loadDataWithBaseURL(null, html, "text/html", "utf-8", null);
                 else if (plainF != null) plainF.setText(android.text.Html.fromHtml(html.replaceAll("(?s)<style>.*?</style>", ""), android.text.Html.FROM_HTML_MODE_COMPACT));

@@ -111,13 +111,23 @@ public final class PcLink {
         try { return URLEncoder.encode(s, "UTF-8"); } catch (java.io.UnsupportedEncodingException e) { return s; }
     }
 
+    /** What the app adds to a sync besides words: where you stopped in videos and books (both ways, the later one wins). */
+    public interface Positions {
+        void collect(Map<String, Object> out);
+        void apply(Map<String, Object> pulled);
+    }
+
+    public String sync(WordStore ws) throws IOException { return sync(ws, null); }
+
     /** Pull and push one language: the PC's lists come down, the phone's changes and waiting cards go up. */
-    public String sync(WordStore ws) throws IOException {
+    public String sync(WordStore ws, Positions pos) throws IOException {
         Map<String, Object> out = ws.outgoing();
+        if (pos != null) pos.collect(out);
         Map<String, Object> res = post("/api/pocket/push", out, 60000);
         ws.sent(out, res);
         Map<String, Object> pc = get("/api/pocket/pull?lang=" + enc(ws.lang), 60000);
         ws.pulled(pc);
+        if (pos != null) pos.apply(pc);
         int cards = Json.arr(res.get("cards")).size();
         StringBuilder msg = new StringBuilder();
         msg.append(ws.knownCount()).append(" known words");

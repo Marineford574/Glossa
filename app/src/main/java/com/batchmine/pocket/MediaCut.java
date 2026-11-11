@@ -73,7 +73,11 @@ public final class MediaCut {
             if (MediaFormat.MIMETYPE_AUDIO_AAC.equals(mime)) { kind = MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4; ext = ".m4a"; }
             else if (MediaFormat.MIMETYPE_AUDIO_OPUS.equals(mime) || MediaFormat.MIMETYPE_AUDIO_VORBIS.equals(mime)) {
                 kind = MediaMuxer.OutputFormat.MUXER_OUTPUT_WEBM; ext = ".webm";
-            } else throw new IOException("the video's sound is " + mime.replace("audio/", "") + ", which the phone cannot cut: the PC makes this card");
+            } else {
+                // MP3, FLAC, AC-3 …: the phone decodes the few seconds and keeps them as a plain .wav (if it has a decoder for them)
+                ex.selectTrack(track);
+                return toWav(ex, fmt, start, end, new File(dir, base + ".wav"));
+            }
             ex.selectTrack(track);
             out = new File(dir, base + ext);
             mux = new MediaMuxer(out.getPath(), kind);
@@ -110,6 +114,79 @@ public final class MediaCut {
             try { if (mux != null) mux.release(); } catch (RuntimeException ignored) { }
             ex.release();
             if (!ok && out != null) //noinspection ResultOfMethodCallIgnored
+                out.delete();
+        }
+    }
+
+    /** Decodes the sound from START to END (the extractor is on the audio track) and writes it as a mono 16-bit .wav. */
+    private static File toWav(MediaExtractor ex, MediaFormat fmt, double start, double end, File out) throws IOException {
+        String mime = fmt.getString(MediaFormat.KEY_MIME);
+        MediaCodec dec = null;
+        boolean ok = false;
+        try {
+            try { dec = MediaCodec.createDecoderByType(mime); dec.configure(fmt, null, null, 0); dec.start(); }
+            catch (Exception e) { throw new IOException("the video's sound is " + mime.replace("audio/", "") + ", which this phone cannot play back to cut: the PC makes this card"); }
+            long a = (long) (Math.max(0, start) * 1_000_000), b = (long) (end * 1_000_000);
+            ex.seekTo(a, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
+            int sr = fmt.containsKey(MediaFormat.KEY_SAMPLE_RATE) ? fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) : 44100;
+            int ch = fmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT) ? fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) : 2;
+            int enc = 2;                                                        // AudioFormat.ENCODING_PCM_16BIT
+            java.io.ByteArrayOutputStream pcm = new java.io.ByteArrayOutputStream();
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+            boolean inDone = false, outDone = false;
+            long deadline = System.currentTimeMillis() + 20000;
+            while (!outDone) {
+                if (System.currentTimeMillis() > deadline) throw new IOException("decoding the sound took too long");
+                if (!inDone) {
+                    int ii = dec.dequeueInputBuffer(10000);
+                    if (ii >= 0) {
+                        ByteBuffer ib = dec.getInputBuffer(ii);
+                        int size = ex.readSampleData(ib, 0);
+                        long t = ex.getSampleTime();
+                        if (size < 0 || t > b + 200_000) { dec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inDone = true; }
+                        else { dec.queueInputBuffer(ii, 0, size, t, 0); ex.advance(); }
+                    }
+                }
+                int oi = dec.dequeueOutputBuffer(info, 10000);
+                if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    MediaFormat of = dec.getOutputFormat();
+                    sr = of.getInteger(MediaFormat.KEY_SAMPLE_RATE);
+                    ch = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
+                    enc = of.containsKey("pcm-encoding") ? of.getInteger("pcm-encoding") : 2;
+                } else if (oi >= 0) {
+                    ByteBuffer ob = dec.getOutputBuffer(oi);
+                    int bytesPer = enc == 4 ? 4 : 2, frames = info.size / (bytesPer * Math.max(1, ch));
+                    ob.position(info.offset);
+                    ob.limit(info.offset + info.size);
+                    ob.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                    for (int f = 0; f < frames; f++) {
+                        long ft = info.presentationTimeUs + (long) f * 1_000_000L / sr;
+                        double sum = 0;
+                        for (int c = 0; c < ch; c++) sum += enc == 4 ? ob.getFloat() * 32767.0 : ob.getShort();
+                        if (ft < a || ft > b) continue;
+                        int v = (int) Math.max(-32768, Math.min(32767, Math.round(sum / Math.max(1, ch))));
+                        pcm.write(v & 0xff);
+                        pcm.write((v >> 8) & 0xff);
+                    }
+                    dec.releaseOutputBuffer(oi, false);
+                    if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outDone = true;
+                }
+            }
+            byte[] data = pcm.toByteArray();
+            if (data.length < sr / 10) throw new IOException("no sound found between " + Ui.time(start) + " and " + Ui.time(end));
+            try (java.io.DataOutputStream w = new java.io.DataOutputStream(new java.io.BufferedOutputStream(new java.io.FileOutputStream(out)))) {
+                w.writeBytes("RIFF"); w.writeInt(Integer.reverseBytes(36 + data.length)); w.writeBytes("WAVEfmt ");
+                w.writeInt(Integer.reverseBytes(16)); w.writeShort(Short.reverseBytes((short) 1)); w.writeShort(Short.reverseBytes((short) 1));
+                w.writeInt(Integer.reverseBytes(sr)); w.writeInt(Integer.reverseBytes(sr * 2)); w.writeShort(Short.reverseBytes((short) 2)); w.writeShort(Short.reverseBytes((short) 16));
+                w.writeBytes("data"); w.writeInt(Integer.reverseBytes(data.length)); w.write(data);
+            }
+            ok = true;
+            return out;
+        } catch (RuntimeException e) {
+            throw new IOException("could not cut the sound: " + e.getMessage());
+        } finally {
+            try { if (dec != null) { dec.stop(); dec.release(); } } catch (RuntimeException ignored) { }
+            if (!ok && out.exists()) //noinspection ResultOfMethodCallIgnored
                 out.delete();
         }
     }

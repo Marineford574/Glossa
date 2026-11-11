@@ -39,10 +39,34 @@ public final class Player extends Activity {
     private boolean dragging, pausedForWord;
     private double loopUntil = -1, loopFrom = -1;
     private String lang;
+    private android.media.MediaPlayer mpl;
+    private float speed = 1f;
+    private double delay;                                // seconds the subtitles are late (+) or early (-), saved for each video
+    private boolean autoPause;
+    private int pausedAt = -2;
+    private android.widget.Button speedBtn, pauseBtn;
 
     static boolean isVideo(String n) {
         n = n.toLowerCase(Locale.ROOT);
-        return n.endsWith(".mp4") || n.endsWith(".mkv") || n.endsWith(".webm") || n.endsWith(".m4v") || n.endsWith(".mov") || n.endsWith(".avi") || n.endsWith(".3gp") || n.endsWith(".ts");
+        return n.endsWith(".mp4") || n.endsWith(".mkv") || n.endsWith(".webm") || n.endsWith(".m4v") || n.endsWith(".mov") || n.endsWith(".avi") || n.endsWith(".3gp") || n.endsWith(".ts") || n.endsWith(".vlink");
+    }
+
+    /** The video's own file name (a link file keeps it on its second line). */
+    static String videoName(File f) {
+        if (f.getName().toLowerCase(Locale.ROOT).endsWith(".vlink")) {
+            try { String[] p = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).split("\n"); if (p.length > 1 && !p[1].trim().isEmpty()) return p[1].trim(); }
+            catch (IOException ignored) { }
+        }
+        return f.getName();
+    }
+
+    /** Where the video is: a copy in the app's folder, or (".vlink") a small file that points to the video where it already is. */
+    static Uri videoUri(File f) {
+        if (f.getName().toLowerCase(Locale.ROOT).endsWith(".vlink")) {
+            try { return Uri.parse(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).split("\n")[0].trim()); }
+            catch (IOException | RuntimeException e) { App.get().report("Could not read the link " + f.getName(), e); }
+        }
+        return Uri.fromFile(f);
     }
 
     static String niceName(File f) { return f.getName().replaceAll("\\.[^.]+$", ""); }
@@ -136,6 +160,16 @@ public final class Player extends Activity {
             br.addView(Ui.weight(bb, 1));
         }
         ctl.addView(br);
+        LinearLayout br2 = Ui.row(this);
+        speedBtn = Ui.button(this, "1×", v -> action("speed"));
+        pauseBtn = Ui.button(this, "Stop after line: off", v -> action("autopause"));
+        for (android.widget.Button bb : new android.widget.Button[]{speedBtn, Ui.button(this, "Sync ±", v -> action("delay")), pauseBtn, Ui.button(this, "Lines", v -> action("lines"))}) {
+            bb.setMinWidth(0);
+            bb.setPadding(0, 0, 0, 0);
+            bb.setTextSize(12);
+            br2.addView(Ui.weight(bb, 1));
+        }
+        ctl.addView(br2);
         root.addView(ctl, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
         subs.setTranslationY(-Ui.dp(this, 0));
         setContentView(root);
@@ -144,9 +178,16 @@ public final class Player extends Activity {
             @Override public void onStartTrackingTouch(SeekBar s) { dragging = true; }
             @Override public void onStopTrackingTouch(SeekBar s) { dragging = false; video.seekTo(s.getProgress()); shown = -2; }
         });
+        delay = app.prefs().getFloat("delay_" + file.getName(), 0f);
+        speed = app.prefs().getFloat("speed", 1f);
+        autoPause = app.prefs().getBoolean("autopause", false);
+        pauseBtn.setText(autoPause ? "Stop after line: on" : "Stop after line: off");
+        speedBtn.setText(speedLabel(speed));
         loadSubs();
-        video.setVideoURI(Uri.fromFile(file));
+        video.setVideoURI(videoUri(file));
         video.setOnPreparedListener(mp -> {
+            mpl = mp;
+            applySpeed();
             seek.setMax(video.getDuration());
             int at = (int) (app.prefs().getFloat("vpos_" + file.getName(), 0) * 1000);
             if (at > 5000 && at < video.getDuration() - 8000) video.seekTo(at - 2000);
@@ -154,7 +195,7 @@ public final class Player extends Activity {
             h.removeCallbacksAndMessages(null);
             tick();
         });
-        video.setOnErrorListener((mp, w, e) -> { Ui.alert(this, "Cannot play this video", "The phone could not play " + file.getName() + ". MP4 (H.264) works everywhere; other formats depend on the phone."); return true; });
+        video.setOnErrorListener((mp, w, e) -> { Ui.alert(this, "Cannot play this video", "The phone could not play " + file.getName() + (file.getName().endsWith(".vlink") ? " (if you moved or deleted the video, add it again)" : "") + ". MP4 (H.264) works everywhere; other formats depend on the phone."); return true; });
     }
 
     private void loadSubs() {
@@ -195,13 +236,32 @@ public final class Player extends Activity {
         double t = video.getCurrentPosition() / 1000.0;
         switch (a) {
             case "play": toggle(); break;
-            case "prev": { int i = Subs.around(main, t); int j = Subs.at(main, t) >= 0 ? i - 1 : i; jump(j); break; }
-            case "next": { int i = Subs.at(main, t); int j = i >= 0 ? i + 1 : nextAfter(t); jump(j); break; }
+            case "prev": { double tt = t - delay; int i = Subs.around(main, tt); int j = Subs.at(main, tt) >= 0 ? i - 1 : i; jump(j); break; }
+            case "next": { double tt = t - delay; int i = Subs.at(main, tt); int j = i >= 0 ? i + 1 : nextAfter(tt); jump(j); break; }
+            case "speed": {
+                float[] steps = {0.6f, 0.75f, 0.9f, 1f, 1.25f, 1.5f};
+                int k = 0;
+                for (int q = 0; q < steps.length; q++) if (Math.abs(steps[q] - speed) < 0.01f) k = q;
+                speed = steps[(k + 1) % steps.length];
+                app.prefs().edit().putFloat("speed", speed).apply();
+                speedBtn.setText(speedLabel(speed));
+                applySpeed();
+                break;
+            }
+            case "autopause":
+                autoPause = !autoPause;
+                app.prefs().edit().putBoolean("autopause", autoPause).apply();
+                pauseBtn.setText(autoPause ? "Stop after line: on" : "Stop after line: off");
+                pausedAt = -2;
+                Ui.toast(this, autoPause ? "The video stops at the end of every line: press play for the next" : "Plays on");
+                break;
+            case "delay": delayDialog(); break;
+            case "lines": linesDialog(); break;
             case "repeat": {
-                int i = Subs.around(main, t);
+                int i = Subs.around(main, t - delay);
                 if (i < 0) return;
-                loopFrom = main.get(i).start - 0.15;
-                loopUntil = main.get(i).end;
+                loopFrom = main.get(i).start + delay - 0.15;
+                loopUntil = main.get(i).end + delay;
                 video.seekTo((int) (Math.max(0, loopFrom) * 1000));
                 video.start();
                 break;
@@ -217,12 +277,55 @@ public final class Player extends Activity {
         }
     }
 
+    static String speedLabel(float s) { return (s == (int) s ? String.valueOf((int) s) : String.valueOf(s)) + "×"; }
+
+    private void applySpeed() {
+        if (mpl == null || android.os.Build.VERSION.SDK_INT < 23) return;
+        try {
+            boolean playing = video.isPlaying();
+            mpl.setPlaybackParams(mpl.getPlaybackParams().setSpeed(speed));
+            if (!playing) video.pause();           // setting the speed can start the playback
+        } catch (RuntimeException e) { Ui.toast(this, "This phone cannot change the speed of this video"); }
+    }
+
+    private void setDelay(double d) {
+        delay = Math.round(d * 10) / 10.0;
+        app.prefs().edit().putFloat("delay_" + file.getName(), (float) delay).apply();
+        shown = -2;
+    }
+
+    private void delayDialog() {
+        LinearLayout box = Ui.col(this);
+        box.setPadding(Ui.dp(this, 16), Ui.dp(this, 8), Ui.dp(this, 16), 0);
+        TextView info = Ui.text(this, "", 16, Ui.TEXT);
+        Runnable draw = () -> info.setText(delay == 0 ? "The subtitles are on time" : String.format(Locale.ROOT, "Subtitles come %.1f s %s", Math.abs(delay), delay > 0 ? "later" : "earlier"));
+        draw.run();
+        box.addView(info);
+        LinearLayout r = Ui.row(this);
+        double[] steps = {-1, -0.1, 0.1, 1};
+        for (double st : steps) r.addView(Ui.weight(Ui.button(this, (st > 0 ? "+" : "−") + Math.abs(st) + " s", v -> { setDelay(delay + st); draw.run(); }), 1));
+        box.addView(r);
+        box.addView(Ui.hint(this, "If the words come before the sound, use + ; if they come after, use −. The setting is kept for this video."));
+        Ui.dialog(this).setTitle("Subtitle timing").setView(box).setPositiveButton("OK", null).setNeutralButton("Reset", (d, w) -> setDelay(0)).show();
+    }
+
+    private void linesDialog() {
+        if (main.isEmpty()) { Ui.toast(this, "No subtitles to list"); return; }
+        String[] items = new String[main.size()];
+        for (int i = 0; i < items.length; i++) items[i] = Ui.time(main.get(i).start) + "  " + main.get(i).text.replace('\n', ' ');
+        int now = Math.max(0, Subs.around(main, video.getCurrentPosition() / 1000.0 - delay));
+        android.app.AlertDialog dlg = Ui.dialog(this).setTitle("All lines (" + items.length + ")").setItems(items, (d, i) -> jump(i)).create();
+        dlg.getListView().setFastScrollEnabled(true);
+        dlg.show();
+        dlg.getListView().setSelection(now);
+    }
+
     private int nextAfter(double t) { for (int i = 0; i < main.size(); i++) if (main.get(i).start > t) return i; return -1; }
 
     private void jump(int i) {
         if (i < 0 || i >= main.size()) return;
         loopUntil = -1;
-        video.seekTo((int) (Math.max(0, main.get(i).start - 0.05) * 1000));
+        video.seekTo((int) (Math.max(0, main.get(i).start + delay - 0.05) * 1000));
         shown = -2;
         video.start();
     }
@@ -254,8 +357,10 @@ public final class Player extends Activity {
             double t = pos / 1000.0;
             if (!dragging) { seek.setProgress(pos); timeText.setText(Ui.time(t)); }
             if (loopUntil > 0 && t >= loopUntil) { video.seekTo((int) (Math.max(0, loopFrom) * 1000)); }
-            int i = Subs.at(main, t);
+            int i = Subs.at(main, t - delay);
             if (i != shown) { shown = i; showLine(i); }
+            if (autoPause && i >= 0 && i != pausedAt && t - delay >= main.get(i).end - 0.08 && video.isPlaying()) { pausedAt = i; video.pause(); }
+            if (i >= 0 && i != pausedAt && t - delay < main.get(i).end - 0.3) pausedAt = -2;
         } catch (RuntimeException e) {
             if (!tickFailed) { tickFailed = true; app.report("Player: showing a line", e); Ui.toast(this, "Something went wrong: " + e); }
         }
@@ -282,22 +387,22 @@ public final class Player extends Activity {
         r.lang = lang;
         r.kind = "video";
         r.sentence = text.replace('\n', ' ');
-        r.start = c.start;
-        r.end = c.end;
-        r.video = Uri.fromFile(file).toString();
-        r.videoName = file.getName();
+        r.start = c.start + delay;
+        r.end = c.end + delay;
+        r.video = videoUri(file).toString();
+        r.videoName = videoName(file);
         r.title = niceName(file);
         StringBuilder tr = new StringBuilder();
         for (Subs.Cue x : second) if (x.start < c.end && x.end > c.start) { if (tr.length() > 0) tr.append(' '); tr.append(x.text.replace('\n', ' ')); }
         r.translation = tr.toString();
-        r.frameAt = (c.start + c.end) / 2;
+        r.frameAt = (c.start + c.end) / 2 + delay;
         WordSheet.show(this, lang, word, r, () -> { col.forget(); shown = -2; });
     }
 
     @Override protected void onPause() {
         super.onPause();
         if (video != null && file != null) {
-            app.prefs().edit().putFloat("vpos_" + file.getName(), video.getCurrentPosition() / 1000f).apply();
+            app.prefs().edit().putFloat("vpos_" + file.getName(), video.getCurrentPosition() / 1000f).putLong("vpost_" + file.getName(), System.currentTimeMillis()).apply();
             video.pause();
         }
     }

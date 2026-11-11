@@ -28,13 +28,14 @@ public final class Cards {
     public static final class Request {
         public String lang = "", kind = "text", word = "", surface = "", sentence = "", translation = "", ipa = "", title = "";
         public List<String> glosses = new ArrayList<>();
+        public String defHtml = "", freq = "", wordAudio = "";   // all dictionaries' meanings (HTML), frequency rank, "yes": add the word spoken
         public String video = "", videoName = "";          // the video (a content:// or file:// link) and its file name
         public double start, end, frameAt = -1;
 
         public Request copy() {
             Request r = new Request();
             r.lang = lang; r.kind = kind; r.word = word; r.surface = surface; r.sentence = sentence; r.translation = translation;
-            r.ipa = ipa; r.title = title; r.glosses = new ArrayList<>(glosses); r.video = video; r.videoName = videoName;
+            r.ipa = ipa; r.title = title; r.glosses = new ArrayList<>(glosses); r.video = video; r.videoName = videoName; r.defHtml = defHtml; r.freq = freq; r.wordAudio = wordAudio;
             r.start = start; r.end = end; r.frameAt = frameAt;
             return r;
         }
@@ -49,6 +50,8 @@ public final class Cards {
             {"ipa", "Pronunciation (IPA)", "ipa|pronunciation|reading|pronuncia"},
             {"audio", "Sentence audio", "audio|sound|sentence audio|clip"},
             {"picture", "Picture", "picture|image|screenshot|immagine|bild"},
+            {"wordaudio", "Word spoken (phone voice)", "word audio|pronunciation audio|audio word|wordaudio"},
+            {"frequency", "Frequency", "frequency|freq|rank|häufigkeit|frequenza"},
             {"source", "Source", "source|from|fonte|quelle"}};
 
     public static boolean useAnki() {
@@ -82,9 +85,14 @@ public final class Cards {
                 v.put("word", esc(r.word));
                 v.put("sentence", bold(r.sentence, r.surface.isEmpty() ? r.word : r.surface));
                 v.put("translation", esc(r.translation));
-                v.put("definition", glossHtml(r.glosses));
+                v.put("definition", r.defHtml.isEmpty() ? glossHtml(r.glosses) : r.defHtml);
+                v.put("frequency", esc(r.freq));
                 v.put("ipa", esc(r.ipa));
                 v.put("source", esc(r.title + (r.kind.equals("video") ? " " + Ui.time(r.start) : "")));
+                if (map.containsKey("wordaudio")) {
+                    try { File wa = Speak.toFile(a, r.lang, r.word, new File(dir, stem + "_w.wav")); v.put("wordaudio", AnkiDroid.addMedia(a, wa, true)); }
+                    catch (java.io.IOException ignored) { /* no voice for this language on the phone: the card is made without it */ }
+                }
                 if (r.kind.equals("video") && !r.video.isEmpty()) {
                     Uri u = Uri.parse(r.video);
                     double pad = p.getInt("pad_ms", 250) / 1000.0;

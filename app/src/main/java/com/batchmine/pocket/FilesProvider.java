@@ -30,7 +30,9 @@ public final class FilesProvider extends ContentProvider {
     private File file(Uri uri) throws FileNotFoundException {
         String name = uri.getLastPathSegment();
         if (name == null || name.contains("/") || name.contains("..")) throw new FileNotFoundException();
-        File f = new File(new File(getContext().getFilesDir(), "cards"), name);
+        boolean upd = uri.getPathSegments().size() == 2 && "update".equals(uri.getPathSegments().get(0));
+        File f = upd ? new File(new File(getContext().getCacheDir(), "update"), name) : new File(new File(getContext().getFilesDir(), "cards"), name);
+        if (upd && !name.endsWith(".apk")) throw new FileNotFoundException(name);
         if (!f.isFile()) throw new FileNotFoundException(name);
         return f;
     }
@@ -54,8 +56,10 @@ public final class FilesProvider extends ContentProvider {
 
     @Override public String getType(Uri uri) {
         String n = String.valueOf(uri.getLastPathSegment()).toLowerCase();
+        if (n.endsWith(".apk")) return "application/vnd.android.package-archive";
         if (n.endsWith(".jpg")) return "image/jpeg";
         if (n.endsWith(".webp")) return "image/webp";
+        if (n.endsWith(".wav")) return "audio/wav";
         if (n.endsWith(".m4a")) return "audio/mp4";
         if (n.endsWith(".webm")) return "audio/webm";
         if (n.endsWith(".ogg")) return "audio/ogg";

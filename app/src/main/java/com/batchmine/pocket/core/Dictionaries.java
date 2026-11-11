@@ -75,10 +75,32 @@ public final class Dictionaries {
         public final String word;
         public final List<Hit> hits = new ArrayList<>();
         public final Map<String, String> ipa = new LinkedHashMap<>();   // term -> "/ipa/  /ipa/"
+        public long freq = -1;                                           // best (lowest) frequency rank over the dictionaries, -1: none
         Result(String word) { this.word = word; }
         public boolean found() { return !hits.isEmpty(); }
         /** The dictionary form to make a card for: the first headword found, else the word itself. */
         public String lemma() { return hits.isEmpty() ? word : hits.get(0).term; }
+    }
+
+    /** The meanings of every dictionary that has the word, one block per dictionary: "Dictionary: 1. … 2. …" (HTML). */
+    public static String allMeanings(Result r) {
+        java.util.Map<String, List<String>> by = new LinkedHashMap<>();
+        for (Hit h : r.hits) {
+            List<String> l = by.get(h.dict);
+            if (l == null) by.put(h.dict, l = new ArrayList<>());
+            for (String g : h.glosses) if (!g.isEmpty() && !l.contains(g)) l.add(g);
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, List<String>> e : by.entrySet()) {
+            if (e.getValue().isEmpty()) continue;
+            if (sb.length() > 0) sb.append("<br>");
+            if (by.size() > 1) sb.append("<i>").append(e.getKey().replace("&", "&amp;").replace("<", "&lt;")).append("</i>");
+            sb.append("<ol>");
+            int n = 0;
+            for (String g : e.getValue()) { if (++n > 8) break; sb.append("<li>").append(g.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")).append("</li>"); }
+            sb.append("</ol>");
+        }
+        return sb.toString();
     }
 
     /** The spellings to look a word up by. */
@@ -130,7 +152,7 @@ public final class Dictionaries {
         if (!r.found()) {
             for (String v : withoutClitics(word, lang)) {
                 Result r2 = lookupOnce(v, lang);
-                if (r2.found()) { Result o = new Result(word); o.hits.addAll(r2.hits); o.ipa.putAll(r2.ipa); return o; }
+                if (r2.found()) { Result o = new Result(word); o.hits.addAll(r2.hits); o.ipa.putAll(r2.ipa); o.freq = r2.freq; return o; }
             }
         }
         return r;
@@ -163,6 +185,12 @@ public final class Dictionaries {
                     if (d.ipa == null) continue;
                     List<String> p = d.ipa.get(t);
                     if (!p.isEmpty() && !r.ipa.containsKey(t)) r.ipa.put(t, p.get(0));
+                }
+                for (Dict d : ds) {
+                    if (d.freq == null) continue;
+                    for (String fv : d.freq.get(t)) {
+                        try { long n = Long.parseLong(fv.trim()); if (n > 0 && (r.freq < 0 || n < r.freq)) r.freq = n; } catch (NumberFormatException ignored) { }
+                    }
                 }
             }
         } catch (IOException ignored) { }

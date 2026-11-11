@@ -101,7 +101,10 @@ public final class Reader extends Activity {
 
     private void save() {
         int pos = list == null ? 0 : list.getFirstVisiblePosition();
-        sp.edit().putInt("rc_" + book.id, chapter).putInt("rp_" + book.id, pos).apply();
+        int before = 0, all = Math.max(1, book.paraCount());
+        for (int i = 0; i < chapter && i < book.chapters.size(); i++) before += book.chapters.get(i).paras.size();
+        sp.edit().putInt("rc_" + book.id, chapter).putInt("rp_" + book.id, pos)
+                .putFloat("rf_" + book.id, (before + pos) / (float) all).putLong("rt_" + book.id, System.currentTimeMillis()).apply();
     }
 
     @Override protected void onPause() { super.onPause(); if (book != null && list != null) save(); }
@@ -111,8 +114,32 @@ public final class Reader extends Activity {
         Book.Chapter ch = book.chapters.get(chapter);
         head.setText((chapter + 1) + "/" + book.chapters.size() + " · " + ch.title);
         col.forget();
-        list.setAdapter(new BaseAdapter() {
-            private final java.util.Map<Integer, CharSequence> cache = new java.util.HashMap<>();
+        BaseAdapter ad = new BaseAdapter() {
+            private final java.util.Map<Integer, CharSequence> cache = new java.util.concurrent.ConcurrentHashMap<>();
+            private final java.util.Set<Integer> asked = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+            /** Colours paragraphs FROM..TO off the screen's thread (the dictionary is read from disk), then updates the lines on screen. */
+            private void colour(int from, int to) {
+                for (int k = from; k <= to && k < ch.paras.size(); k++) if (k >= 0) asked.add(k);
+                final BaseAdapter me = this;
+                app.bg(() -> {
+                    for (int k = Math.max(0, from); k <= to && k < ch.paras.size(); k++) {
+                        if (list.getAdapter() != me) return;                 // another chapter was opened meanwhile
+                        if (cache.containsKey(k)) continue;
+                        CharSequence cs = col.spans(ch.paras.get(k), (word, start, end, text) -> tapped(word, start, text));
+                        cache.put(k, cs);
+                        final int kk = k;
+                        app.post(() -> {
+                            if (list.getAdapter() != me) return;
+                            for (int c = 0; c < list.getChildCount(); c++) {
+                                View child = list.getChildAt(c);
+                                if (child instanceof TextView && Integer.valueOf(kk).equals(child.getTag())) ((TextView) child).setText(cache.get(kk));
+                            }
+                        });
+                    }
+                });
+            }
+
             @Override public int getCount() { return ch.paras.size(); }
             @Override public Object getItem(int i) { return ch.paras.get(i); }
             @Override public long getItemId(int i) { return i; }
@@ -126,15 +153,17 @@ public final class Reader extends Activity {
                 t.setPadding(pad, Ui.dp(Reader.this, 6), pad, Ui.dp(Reader.this, 6));
                 t.setMovementMethod(LinkMovementMethod.getInstance());
                 t.setHighlightColor(0x553584E4);
+                t.setTag(i);
                 CharSequence s = cache.get(i);
-                if (s == null) {
-                    s = col.spans(ch.paras.get(i), (word, start, end, text) -> tapped(word, start, text));
-                    cache.put(i, s);
+                if (s != null) t.setText(s);
+                else {
+                    t.setText(ch.paras.get(i));                              // at once, plain; the colours follow a moment later
+                    if (!asked.contains(i)) colour(i, i + 12);                // and the next paragraphs are got ready as you read on
                 }
-                t.setText(s);
                 return t;
             }
-        });
+        };
+        list.setAdapter(ad);
         list.setSelection(Math.min(at, Math.max(0, ch.paras.size() - 1)));
         save();
     }

@@ -109,7 +109,15 @@ public final class MainActivity extends Activity {
 
     @Override protected void onSaveInstanceState(Bundle o) { super.onSaveInstanceState(o); o.putString("tab", tab); }
 
-    @Override protected void onResume() { super.onResume(); show(); }
+    @Override protected void onResume() {
+        super.onResume(); show();
+        if (!updateAsked) {
+            updateAsked = true;
+            if (System.currentTimeMillis() - app.prefs().getLong("update_checked", 0) > 20L * 3600 * 1000) checkUpdate(false);
+        }
+        // automatic sync: when the app is opened or comes back after a while (the PC is asked quietly; no PC, no message)
+        if (app.prefs().getBoolean("auto_sync", true) && app.pc() != null && System.currentTimeMillis() - app.prefs().getLong("synced_at", 0) > 10L * 60 * 1000) sync(false);
+    }
 
     private void show() {
         for (TextView t : tabs) { boolean on = t.getTag().equals(tab); t.setTextColor(on ? Ui.ACCENT : Ui.DIM); }
@@ -137,23 +145,78 @@ public final class MainActivity extends Activity {
         Ui.dialog(this).setTitle("Language").setItems(items, (d, i) -> { app.setLang(items[i]); show(); }).show();
     }
 
-    private void sync() {
+    private void sync() { sync(true); }
+
+    /** quiet: from the start of the app - it says nothing if the PC is not there. */
+    private void sync(boolean loud) {
         PcLink pc = app.pc();
-        if (pc == null) { tab = "settings"; show(); Ui.toast(this, "First paste the link from Glossa on the PC (Settings → Phone access)"); return; }
-        if (syncing) { Ui.toast(this, "Already syncing…"); return; }
+        if (pc == null) { if (loud) { tab = "settings"; show(); Ui.toast(this, "First paste the link from Glossa on the PC (Settings → Phone access)"); } return; }
+        if (syncing) { if (loud) Ui.toast(this, "Already syncing…"); return; }
         syncing = true;
         status.setText("syncing with the PC…");
         String lang = app.lang();
         app.bg(() -> {
             try {
-                String msg = pc.sync(app.store(lang));
-                app.post(() -> { Ui.toast(this, "Synced: " + msg); show(); });
+                String msg = pc.sync(app.store(lang), positions());
+                app.prefs().edit().putLong("synced_at", System.currentTimeMillis()).apply();
+                app.post(() -> { if (loud) Ui.toast(this, "Synced: " + msg); show(); });
             } catch (IOException e) {
-                app.post(() -> { show(); Ui.alert(this, "Could not sync", explain(e)); });
+                app.post(() -> { show(); if (loud) Ui.alert(this, "Could not sync", explain(e)); });
             } finally {
                 syncing = false;
             }
         });
+    }
+
+    /** Where you stopped in videos and books, to and from the PC (the later change wins). */
+    private PcLink.Positions positions() {
+        return new PcLink.Positions() {
+            @Override public void collect(Map<String, Object> out) {
+                android.content.SharedPreferences sp = app.prefs();
+                Map<String, Object> vp = new java.util.LinkedHashMap<>(), bp = new java.util.LinkedHashMap<>();
+                File[] vs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+                if (vs != null) for (File f : vs) {
+                    long t = sp.getLong("vpost_" + f.getName(), 0);
+                    if (t > 0) vp.put(Player.videoName(f).toLowerCase(Locale.ROOT), new ArrayList<Object>(Arrays.asList((double) sp.getFloat("vpos_" + f.getName(), 0), (double) t)));
+                }
+                File[] bs = app.dir("books").listFiles((d, n) -> n.startsWith("pc") && n.endsWith(".json"));
+                if (bs != null) for (File f : bs) {
+                    String id = f.getName().replaceAll("\\.json$", "");
+                    long t = sp.getLong("rt_" + id, 0);
+                    if (t > 0) bp.put(id.substring(2), new ArrayList<Object>(Arrays.asList((double) sp.getFloat("rf_" + id, 0), (double) t)));
+                }
+                out.put("video_pos", vp);
+                out.put("book_pos", bp);
+            }
+
+            @Override public void apply(Map<String, Object> pulled) {
+                android.content.SharedPreferences sp = app.prefs();
+                android.content.SharedPreferences.Editor ed = sp.edit();
+                File[] vs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+                for (Map.Entry<String, Object> e : Json.obj(pulled.get("video_pos")).entrySet()) {
+                    List<Object> v = Json.arr(e.getValue());
+                    if (v.size() < 2 || vs == null) continue;
+                    long t = (long) Json.num(v.get(1), 0);
+                    for (File f : vs) if (Player.videoName(f).equalsIgnoreCase(e.getKey()) && t > sp.getLong("vpost_" + f.getName(), 0))
+                        ed.putFloat("vpos_" + f.getName(), (float) Json.num(v.get(0), 0)).putLong("vpost_" + f.getName(), t);
+                }
+                for (Map.Entry<String, Object> e : Json.obj(pulled.get("book_pos")).entrySet()) {
+                    List<Object> v = Json.arr(e.getValue());
+                    String id = "pc" + e.getKey();
+                    File bf = new File(app.dir("books"), id + ".json");
+                    long t = v.size() < 2 ? 0 : (long) Json.num(v.get(1), 0);
+                    if (t <= sp.getLong("rt_" + id, 0) || !bf.isFile()) continue;
+                    try {
+                        Book bk = Book.read(bf);
+                        int target = (int) Math.round(Math.max(0, Math.min(1, Json.num(v.get(0), 0))) * bk.paraCount()), c = 0;
+                        while (c < bk.chapters.size() - 1 && target >= bk.chapters.get(c).paras.size()) { target -= bk.chapters.get(c).paras.size(); c++; }
+                        ed.putInt("rc_" + id, c).putInt("rp_" + id, Math.max(0, Math.min(target, Math.max(0, bk.chapters.get(c).paras.size() - 1))))
+                                .putFloat("rf_" + id, (float) Json.num(v.get(0), 0)).putLong("rt_" + id, t);
+                    } catch (IOException | RuntimeException ignored) { }
+                }
+                ed.apply();
+            }
+        };
     }
 
     static String explain(IOException e) {
@@ -259,10 +322,12 @@ public final class MainActivity extends Activity {
             for (File f : fs) {
                 int subs = Player.subsOf(f).size();
                 double at = app.prefs().getFloat("vpos_" + f.getName(), 0);
-                LinearLayout it = Ui.item(this, Player.niceName(f), Ui.size(f.length()) + " · " + (subs == 0 ? "no subtitles" : subs + " subtitle file" + (subs > 1 ? "s" : "")) + (at > 5 ? " · at " + Ui.time(at) : ""),
+                boolean linked = f.getName().endsWith(".vlink");
+                long fsize = linked ? linkSize(f) : f.length();
+                LinearLayout it = Ui.item(this, Player.niceName(f), (fsize < 0 ? "video not found (add it again)" : Ui.size(fsize) + (linked ? " (stays where it is)" : "")) + " · " + (subs == 0 ? "no subtitles" : subs + " subtitle file" + (subs > 1 ? "s" : "")) + (at > 5 ? " · at " + Ui.time(at) : ""),
                         v -> { Intent i = new Intent(this, Player.class); i.putExtra("path", f.getPath()); startActivity(i); });
                 it.setOnLongClickListener(v -> {
-                    Ui.dialog(this).setTitle(f.getName()).setItems(new String[]{"Delete this video and its subtitles"}, (d, w) -> {
+                    Ui.dialog(this).setTitle(f.getName()).setItems(new String[]{f.getName().endsWith(".vlink") ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles"}, (d, w) -> {
                         for (File s : Player.subsOf(f)) s.delete();
                         f.delete();
                         show();
@@ -273,6 +338,13 @@ public final class MainActivity extends Activity {
             }
         }
         return Ui.scroll(this, l);
+    }
+
+    /** Size of a video that is only linked; -1 when it is gone. */
+    private long linkSize(File link) {
+        try (android.content.res.AssetFileDescriptor fd = getContentResolver().openAssetFileDescriptor(Player.videoUri(link), "r")) {
+            return fd == null ? -1 : fd.getLength();
+        } catch (Exception e) { return -1; }
     }
 
     private void pcVideos() {
@@ -379,6 +451,14 @@ public final class MainActivity extends Activity {
         r.addView(Ui.weight(Ui.button(this, "Forget", v -> { app.prefs().edit().remove("pc_link").apply(); show(); }), 1));
         Ui.add(l, r, 12);
 
+        android.widget.CheckBox au = new android.widget.CheckBox(this);
+        au.setText("Sync by itself when the app opens");
+        au.setTextColor(Ui.TEXT);
+        au.setChecked(app.prefs().getBoolean("auto_sync", true));
+        au.setOnCheckedChangeListener((b, on) -> app.prefs().edit().putBoolean("auto_sync", on).apply());
+        Ui.add(l, au, 4);
+        l.addView(Ui.hint(this, "Known words, looked-up words, waiting cards and where you stopped in videos and books are exchanged with the PC. If the PC is off nothing happens."));
+
         l.addView(Ui.title(this, "Dictionaries"));
         l.addView(Ui.hint(this, "Import the same wty zip files the PC uses (wty-it-it.zip, and the -ipa one for pronunciation). It takes a minute or two; the dictionary then works offline."));
         for (Dict d : app.dicts.list()) {
@@ -397,13 +477,63 @@ public final class MainActivity extends Activity {
         }), 1));
         cr.addView(Ui.weight(Ui.button(this, "AnkiDroid fields…", v -> Cards.setup(this, app.lang(), this::show)), 1));
         Ui.add(l, cr, 8);
-        l.addView(Ui.hint(this, "Sound and picture of a video line are cut on the phone from the video file (MP4 / MKV with AAC or Opus sound). Anything the phone cannot cut is left to the PC."));
+        android.widget.CheckBox cp = new android.widget.CheckBox(this);
+        cp.setText("Copy videos into the app (uses more storage)");
+        cp.setTextColor(Ui.TEXT);
+        cp.setChecked(app.prefs().getBoolean("copy_videos", false));
+        cp.setOnCheckedChangeListener((b, on) -> app.prefs().edit().putBoolean("copy_videos", on).apply());
+        Ui.add(l, cp, 6);
+        l.addView(Ui.hint(this, "By default a video you add stays where it is on the phone and the app only remembers the place (no second copy). Subtitles are copied (they are tiny). Videos from the PC are copied."));
+        l.addView(Ui.hint(this, "Sound and picture of a video line are cut on the phone from the video file (MP4 / MKV). Sound in AAC, Opus or Vorbis is cut as it is; MP3, FLAC and similar are decoded (a small .wav). If the phone has no decoder for it (for example AC-3), the card is left to the PC."));
+
+        l.addView(Ui.title(this, "Updates"));
+        l.addView(Ui.hint(this, "This is version " + Updater.myName(app) + ". New versions are built on GitHub; “Check for a new version” downloads the newest one and installs it over this one (your words, books and dictionaries stay)."));
+        if (Updater.repo(app).isEmpty() || !app.getString(R.string.update_repo).trim().matches("[\\w.-]+/[\\w.-]+")) {
+            android.widget.EditText rp = Ui.input(this, app.prefs().getString("update_repo", ""), "yourname/glossa");
+            Ui.add(l, rp, 6);
+            Ui.add(l, Ui.button(this, "Save the GitHub project", v -> { app.prefs().edit().putString("update_repo", rp.getText().toString().trim()).apply(); show(); }), 6);
+        }
+        Ui.add(l, Ui.primary(this, "Check for a new version", v -> checkUpdate(true)), 12);
 
         l.addView(Ui.title(this, "Problem report"));
         File last = new File(getFilesDir(), "crash-seen.txt");
         l.addView(Ui.hint(this, last.isFile() ? "The last time something went wrong, the app saved what happened. Copy it and send it to get it fixed." : "Nothing has gone wrong so far."));
         if (last.isFile()) Ui.add(l, Ui.button(this, "Show the report", v -> problemReport("Problem report", last)), 8);
         return Ui.scroll(this, l);
+    }
+
+    // ================================================================ updates
+    private boolean updateAsked;
+
+    /** Asks GitHub whether a newer build exists. quiet: from the start of the app (says nothing unless there is one). */
+    private void checkUpdate(boolean loud) {
+        if (Updater.repo(app).isEmpty()) { if (loud) Ui.toast(this, "Type the GitHub project below first"); return; }
+        if (loud) Ui.toast(this, "Looking for a new version…");
+        app.bg(() -> {
+            try {
+                Updater.Found f = Updater.check(app);
+                app.prefs().edit().putLong("update_checked", System.currentTimeMillis()).apply();
+                app.post(() -> {
+                    if (f == null) { if (loud) Ui.alert(this, "Up to date", "This is the newest version (" + Updater.myName(app) + ")."); return; }
+                    Ui.dialog(this).setTitle("A new version is ready")
+                            .setMessage("Install it now? Your words, books and dictionaries stay.")
+                            .setNegativeButton("Later", null)
+                            .setPositiveButton("Download and install", (d, w) -> downloadUpdate(f)).show();
+                });
+            } catch (IOException e) { if (loud) app.post(() -> Ui.alert(this, "Could not check", e.getMessage())); }
+        });
+    }
+
+    private void downloadUpdate(Updater.Found f) {
+        Ui.toast(this, "Downloading… the installer opens when it is done");
+        app.bg(() -> {
+            try {
+                File apk = Updater.download(app, f, p -> { });
+                app.post(() -> {
+                    if (!Updater.install(this, apk)) Ui.alert(this, "One switch first", "Android asks you to allow this app to install apps. Switch it on, go back, and press “Check for a new version” again.");
+                });
+            } catch (IOException e) { app.post(() -> Ui.alert(this, "Download failed", String.valueOf(e.getMessage()))); }
+        });
     }
 
     // ================================================================ picking files
@@ -413,6 +543,7 @@ public final class MainActivity extends Activity {
         i.setType("*/*");
         i.putExtra(Intent.EXTRA_MIME_TYPES, types);
         i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(i, req);
     }
 
@@ -476,6 +607,15 @@ public final class MainActivity extends Activity {
                         name = nn;
                     }
                     used.add(name.toLowerCase(Locale.ROOT));
+                    if (Player.isVideo(name) && !app.prefs().getBoolean("copy_videos", false)) {      // not copied: the app remembers where it is
+                        try {
+                            getContentResolver().takePersistableUriPermission(uris.get(k), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                            String link = name.replaceAll("\\.[^.]+$", "") + ".vlink";
+                            java.nio.file.Files.write(new File(app.videoDir(), link).toPath(), (uris.get(k).toString() + "\n" + name).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            n++;
+                            continue;
+                        } catch (SecurityException | IOException ignored) { /* this app of files cannot be linked: copy instead */ }
+                    }
                     try (InputStream in = getContentResolver().openInputStream(uris.get(k)); OutputStream out = new FileOutputStream(new File(app.videoDir(), name))) {
                         if (in == null) throw new IOException("could not open " + names.get(k));
                         byte[] buf = new byte[1 << 16];
