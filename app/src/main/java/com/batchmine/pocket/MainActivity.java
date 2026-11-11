@@ -48,17 +48,18 @@ public final class MainActivity extends Activity {
         super.onCreate(b);
         app = App.get();
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        Ui.bars(this);
         LinearLayout root = Ui.col(this);
         root.setBackgroundColor(Ui.BG);
         int p = Ui.dp(this, 12);
         LinearLayout top = Ui.row(this);
         top.setPadding(p, p, p, 4);
-        TextView name = Ui.text(this, "Pocket", 22, Ui.TEXT);
+        TextView name = Ui.text(this, "Glossa", 24, Ui.TEXT);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         top.addView(Ui.weight(name, 1));
         langBtn = Ui.button(this, app.lang().toUpperCase(Locale.ROOT), v -> pickLang());
         top.addView(langBtn);
-        top.addView(Ui.button(this, "Sync", v -> sync()));
+        top.addView(Ui.primary(this, "Sync", v -> sync()));
         root.addView(top);
         status = Ui.hint(this, "");
         status.setPadding(p, 0, p, 4);
@@ -68,7 +69,7 @@ public final class MainActivity extends Activity {
         LinearLayout bar = Ui.row(this);
         bar.setBackgroundColor(Ui.CARD);
         for (String[] t : new String[][]{{"books", "Books"}, {"videos", "Videos"}, {"words", "Words"}, {"settings", "Settings"}}) {
-            TextView v = Ui.text(this, t[1], 15, Ui.DIM);
+            TextView v = Ui.text(this, t[1], 14, Ui.DIM);
             v.setGravity(Gravity.CENTER);
             v.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 14));
             v.setTag(t[0]);
@@ -144,7 +145,7 @@ public final class MainActivity extends Activity {
     }
 
     private void show() {
-        for (TextView t : tabs) { boolean on = t.getTag().equals(tab); t.setTextColor(on ? Ui.ACCENT : Ui.DIM); }
+        for (TextView t : tabs) { boolean on = t.getTag().equals(tab); t.setTextColor(on ? Ui.ACCENT : Ui.DIM); t.setTypeface(on ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT); }
         langBtn.setText(app.lang().toUpperCase(Locale.ROOT));
         WordStore ws = app.store();
         int n = ws.unsentCount();
@@ -214,6 +215,7 @@ public final class MainActivity extends Activity {
             }
 
             @Override public void apply(Map<String, Object> pulled) {
+                if (Ui.setPcLook(MainActivity.this, Json.obj(pulled.get("look")))) runOnUiThread(() -> recreate());      // the PC's theme changed: the screens are built again
                 android.content.SharedPreferences sp = app.prefs();
                 android.content.SharedPreferences.Editor ed = sp.edit();
                 File[] vs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
@@ -482,6 +484,20 @@ public final class MainActivity extends Activity {
         au.setOnCheckedChangeListener((b, on) -> app.prefs().edit().putBoolean("auto_sync", on).apply());
         Ui.add(l, au, 4);
         l.addView(Ui.hint(this, "Known words, looked-up words, waiting cards and where you stopped in videos and books are exchanged with the PC. If the PC is off nothing happens."));
+
+        l.addView(Ui.title(this, "Look"));
+        String cur = app.prefs().getString("theme", "pc");
+        l.addView(Ui.hint(this, "The colours follow the theme you picked in Glossa on the PC (Look and window) after each sync. You can also pick one here."));
+        Ui.add(l, Ui.item(this, "Theme", "pc".equals(cur) ? "Same as on the PC" : Ui.themeName(cur), v -> {
+            String[] names = new String[Ui.THEMES.length + 1];
+            names[0] = "Same as on the PC";
+            for (int i = 0; i < Ui.THEMES.length; i++) names[i + 1] = Ui.THEMES[i][1];
+            Ui.dialog(this).setTitle("Theme").setItems(names, (dl, i) -> {
+                app.prefs().edit().putString("theme", i == 0 ? "pc" : Ui.THEMES[i - 1][0]).apply();
+                Ui.load(this);
+                recreate();
+            }).show();
+        }), 12);
 
         l.addView(Ui.title(this, "Dictionaries"));
         l.addView(Ui.hint(this, "Import the same wty zip files the PC uses (wty-it-it.zip, and the -ipa one for pronunciation). It takes a minute or two; the dictionary then works offline."));

@@ -53,6 +53,7 @@ public final class Reader extends Activity {
         chapter = Math.max(0, Math.min(sp.getInt("rc_" + id, 0), book.chapters.size() - 1));
         firstPara = Math.max(0, sp.getInt("rp_" + id, 0));
         LinearLayout root = Ui.col(this);
+        Ui.bars(this);
         root.setBackgroundColor(Ui.BG);
         LinearLayout bar = Ui.row(this);
         int p = Ui.dp(this, 8);

@@ -62,7 +62,7 @@ public final class WordSheet {
         Dialog d = new Dialog(a, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar);
         d.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout box = Ui.col(a);
-        box.setBackground(Ui.round(Ui.BG, Ui.dp(a, 14)));
+        box.setBackground(Ui.round(Ui.BG, Ui.dp(a, 22)));
         int p = Ui.dp(a, 12);
         box.setPadding(p, p, p, p);
         final String[] word = {word0};
@@ -283,11 +283,11 @@ public final class WordSheet {
         StringBuilder sb = new StringBuilder();
         java.util.Set<Integer> on = firstDictionary(r);
         sb.append("<html><head><meta name=viewport content='width=device-width, initial-scale=1'><style>")
-          .append("body{background:#222226;color:#ececec;font:16px/1.5 sans-serif;margin:0;padding:0 2px 20px;--fg:#ececec;--text-color:#ececec}")
-          .append("a{color:#78aeed}.hd{margin:10px 0 4px;font-weight:bold;font-size:17px;display:flex;align-items:center;gap:8px}.hd small{color:#9a9aa2;font-weight:normal;font-size:13px}")
-          .append(".hd input{width:22px;height:22px;flex:none;accent-color:#3584e4}.blk{border-top:1px solid #34343a;margin-top:6px}")
-          .append(".via{color:#9a9aa2;font-size:13px;margin-bottom:4px}ol{padding-left:22px;margin:4px 0}summary{color:#9a9aa2;cursor:pointer}")
-          .append("details{margin:2px 0}.none{color:#9a9aa2;margin-top:20px}")
+          .append("body{background:").append(Ui.hex(Ui.CARD)).append(";color:").append(Ui.hex(Ui.TEXT)).append(";font:16px/1.5 sans-serif;margin:0;padding:0 2px 20px;--fg:").append(Ui.hex(Ui.TEXT)).append(";--text-color:").append(Ui.hex(Ui.TEXT)).append("}")
+          .append("a{color:").append(Ui.hex(Ui.ACCENT)).append("}.hd{margin:10px 0 4px;font-weight:bold;font-size:17px;display:flex;align-items:center;gap:8px}.hd small{color:").append(Ui.hex(Ui.DIM)).append(";font-weight:normal;font-size:13px}")
+          .append(".hd input{width:22px;height:22px;flex:none;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}.blk{border-top:1px solid ").append(Ui.hex(Ui.LINE)).append(";margin-top:6px}")
+          .append(".via{color:").append(Ui.hex(Ui.DIM)).append(";font-size:13px;margin-bottom:4px}ol{padding-left:22px;margin:4px 0}summary{color:").append(Ui.hex(Ui.DIM)).append(";cursor:pointer}")
+          .append("details{margin:2px 0}.none{color:").append(Ui.hex(Ui.DIM)).append(";margin-top:20px}")
           .append(css == null ? "" : css)
           .append("</style><script>function pick(){var a=[];document.querySelectorAll('input.pk').forEach(function(x){if(x.checked)a.push(x.getAttribute('data-i'))});Android.picks(a.join(','))}</script></head><body>");
         if (!r.found()) {

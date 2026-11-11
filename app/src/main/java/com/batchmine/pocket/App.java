@@ -34,6 +34,7 @@ public final class App extends Application {
             if (prev != null) prev.uncaughtException(t, e); else System.exit(2);
         });
         dicts = new Dictionaries(new File(getFilesDir(), "dicts"));
+        Ui.load(this);                                  // the colours of the theme (the PC's, or one picked here)
     }
 
     /** Writes what went wrong to crash.txt; the home screen shows it (with a Copy button) the next time it opens. */

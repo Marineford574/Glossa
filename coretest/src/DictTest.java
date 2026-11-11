@@ -19,12 +19,13 @@ public class DictTest {
         for (String w : new String[]{"casa", "case", "mangiato", "Sbrigiamoci", "dell'acqua", "Attento", "tornato", "xyzzy", "puoi"}) {
             long t = System.nanoTime();
             Dictionaries.Result r = ds.lookup(w, "it");
-            System.out.printf("%-12s %5.1f ms  lemma=%s hits=%d ipa=%s cands=%s%n", w, (System.nanoTime() - t) / 1e6, r.lemma(), r.hits.size(), r.ipa, ds.candidates(w, "it"));
+            System.out.printf("%-12s %5.1f ms  lemma=%s hits=%d ipa=%s cands=%s%n", w, (System.nanoTime() - t) / 1e6, r.lemma(), r.hits.size(), r.ipa, r.freq, ds.candidates(w, "it"));
             if (!r.hits.isEmpty()) {
                 Dictionaries.Hit h = r.hits.get(0);
                 System.out.println("    via=" + h.via + " pos=" + h.pos + " glosses=" + h.glosses.subList(0, Math.min(2, h.glosses.size())));
             }
         }
+        if (ds.lookup("casa", "it").hits.isEmpty()) return;
         Dictionaries.Hit h = ds.lookup("casa", "it").hits.get(0);
         System.out.println(h.html.substring(0, Math.min(500, h.html.length())));
         System.out.println("suggest: " + ds.suggest("mang", "it", 8));
