@@ -42,7 +42,9 @@ public final class MainActivity extends Activity {
     private TextView langBtn, status;
     private String tab = "home";
     private static volatile boolean syncing;
-    private final List<TextView> tabs = new ArrayList<>();
+    private final List<View> tabs = new ArrayList<>();
+    private android.widget.ImageView gear;
+    private String before = "home";                             // the tab to go back to from Settings
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -60,26 +62,51 @@ public final class MainActivity extends Activity {
         langBtn = Ui.button(this, app.lang().toUpperCase(Locale.ROOT), v -> pickLang());
         top.addView(langBtn);
         top.addView(Ui.primary(this, "Sync", v -> sync()));
+        // Settings is not a tab: a gear in the corner, like the gear in the PC's side-menu foot
+        gear = Ui.icon(this, R.drawable.ic_nav_gear, 24, Ui.DIM);
+        gear.setContentDescription("Settings");
+        int gp = Ui.dp(this, 10);
+        gear.setPadding(gp, gp, gp, gp);
+        gear.setOnClickListener(v -> openSettings());
+        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44));
+        glp.leftMargin = Ui.dp(this, 4);
+        top.addView(gear, glp);
         root.addView(top);
         status = Ui.hint(this, "");
         status.setPadding(p, 0, p, 4);
         root.addView(status);
         body = new FrameLayout(this);
         root.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        // bottom bar: the PC side-menu icons (ICON.home / film / book / letters in mine_gui.js) with their names under them
+        View line = new View(this);
+        line.setBackgroundColor(Ui.CARD2);
+        root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, Ui.dp(this, 1))));
         LinearLayout bar = Ui.row(this);
         bar.setBackgroundColor(Ui.CARD);
-        for (String[] t : new String[][]{{"home", "Home"}, {"books", "Books"}, {"videos", "Videos"}, {"words", "Words"}, {"settings", "Settings"}}) {
-            TextView v = Ui.text(this, t[1], 14, Ui.DIM);
+        int[] icons = {R.drawable.ic_nav_home, R.drawable.ic_nav_film, R.drawable.ic_nav_book, R.drawable.ic_nav_letters};
+        String[][] names = {{"home", "Home"}, {"videos", "Videos"}, {"books", "Books"}, {"words", "Words"}};
+        for (int k = 0; k < names.length; k++) {
+            String[] t = names[k];
+            LinearLayout v = Ui.col(this);
             v.setGravity(Gravity.CENTER);
-            v.setPadding(0, Ui.dp(this, 14), 0, Ui.dp(this, 14));
+            v.setPadding(0, Ui.dp(this, 7), 0, Ui.dp(this, 7));
             v.setTag(t[0]);
+            v.setContentDescription(t[1]);
+            android.widget.ImageView ic = Ui.icon(this, icons[k], 22, Ui.DIM);
+            LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(Ui.dp(this, 52), Ui.dp(this, 28));
+            ic.setPadding(0, Ui.dp(this, 3), 0, Ui.dp(this, 3));
+            v.addView(ic, ilp);
+            TextView lb = Ui.text(this, t[1], 12, Ui.DIM);
+            lb.setGravity(Gravity.CENTER);
+            lb.setPadding(0, Ui.dp(this, 2), 0, 0);
+            v.addView(lb);
             v.setOnClickListener(x -> { tab = t[0]; show(); });
             bar.addView(v, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             tabs.add(v);
         }
         root.addView(bar);
         setContentView(root);
-        if (b != null) tab = b.getString("tab", "home");
+        if (b != null) { tab = b.getString("tab", "home"); before = b.getString("before", "home"); }
         sharedText(getIntent());
         File crash = new File(getFilesDir(), "crash.txt");
         if (crash.isFile()) {
@@ -132,7 +159,23 @@ public final class MainActivity extends Activity {
                 .setNegativeButton("Close", null).show();
     }
 
-    @Override protected void onSaveInstanceState(Bundle o) { super.onSaveInstanceState(o); o.putString("tab", tab); }
+    @Override protected void onSaveInstanceState(Bundle o) { super.onSaveInstanceState(o); o.putString("tab", tab); o.putString("before", before); }
+
+    private void openSettings() {
+        if ("settings".equals(tab)) { tab = before; show(); return; }     // the gear again closes it
+        toSettings();
+    }
+
+    private void toSettings() {
+        if (!"settings".equals(tab)) before = tab;
+        tab = "settings"; show();
+    }
+
+    @Override public void onBackPressed() {
+        if ("settings".equals(tab)) { tab = before; show(); return; }
+        if (!"home".equals(tab)) { tab = "home"; show(); return; }
+        super.onBackPressed();
+    }
 
     @Override protected void onResume() {
         super.onResume(); show();
@@ -145,7 +188,19 @@ public final class MainActivity extends Activity {
     }
 
     private void show() {
-        for (TextView t : tabs) { boolean on = t.getTag().equals(tab); t.setTextColor(on ? Ui.ACCENT : Ui.DIM); t.setTypeface(on ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT); }
+        for (View t : tabs) {                   // the chosen tab: accent icon on a soft pill (as the PC side menu marks its page) and a bold name
+            boolean on = t.getTag().equals(tab);
+            LinearLayout c = (LinearLayout) t;
+            android.widget.ImageView ic = (android.widget.ImageView) c.getChildAt(0);
+            TextView lb = (TextView) c.getChildAt(1);
+            ic.setColorFilter(on ? Ui.ACCENT : Ui.DIM);
+            ic.setBackground(on ? Ui.round(Ui.mix(Ui.CARD, Ui.ACCENT, 0.18f), Ui.dp(this, 14)) : null);
+            lb.setTextColor(on ? Ui.TEXT : Ui.DIM);
+            lb.setTypeface(on ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT);
+        }
+        boolean set = "settings".equals(tab);
+        gear.setColorFilter(set ? Ui.ACCENT : Ui.DIM);
+        gear.setBackground(set ? Ui.round(Ui.mix(Ui.BG, Ui.ACCENT, 0.18f), Ui.dp(this, 22)) : null);
         langBtn.setText(app.lang().toUpperCase(Locale.ROOT));
         WordStore ws = app.store();
         int n = ws.unsentCount();
@@ -176,7 +231,7 @@ public final class MainActivity extends Activity {
     /** quiet: from the start of the app - it says nothing if the PC is not there. */
     private void sync(boolean loud) {
         PcLink pc = app.pc();
-        if (pc == null) { if (loud) { tab = "settings"; show(); Ui.toast(this, "First paste the link from Glossa on the PC (Settings → Phone access)"); } return; }
+        if (pc == null) { if (loud) { toSettings(); Ui.toast(this, "First paste the link from Glossa on the PC (Settings → Phone access)"); } return; }
         if (syncing) { if (loud) Ui.toast(this, "Already syncing…"); return; }
         syncing = true;
         status.setText("syncing with the PC…");
@@ -280,7 +335,7 @@ public final class MainActivity extends Activity {
         }
         Ui.add(l, nums, 14);
         if (app.pc() == null) {
-            Ui.add(l, Ui.item(this, "Link the PC", "Paste the link from Glossa on the PC (Settings → Phone access) to exchange words, cards and where you stopped.", v -> { tab = "settings"; show(); }), 14);
+            Ui.add(l, Ui.item(this, "Link the PC", "Paste the link from Glossa on the PC (Settings → Phone access) to exchange words, cards and where you stopped.", v -> { toSettings(); }), 14);
         }
 
         // continue: the videos and books touched last, newest first

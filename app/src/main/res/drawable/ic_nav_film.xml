@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the same drawing as the PC side menu (ICON.film in mine_gui.js) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="16" android:viewportHeight="16">
+    <path android:pathData="M3.5 1.8h9a1.5 1.5 0 0 1 1.5 1.5v9.4a1.5 1.5 0 0 1 -1.5 1.5h-9a1.5 1.5 0 0 1 -1.5 -1.5v-9.4a1.5 1.5 0 0 1 1.5 -1.5z" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.6" />
+    <path android:pathData="M5.2 1.8v12.4M10.8 1.8v12.4M2 5.6h3.2M2 10.4h3.2M10.8 5.6H14M10.8 10.4H14" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.6" />
+</vector>

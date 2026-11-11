@@ -167,6 +167,17 @@ public final class Ui {
         return t;
     }
 
+    /** A drawable icon tinted with one colour (the bottom bar and the gear use the PC's side-menu drawings). */
+    public static android.widget.ImageView icon(Context c, int res, int sizeDp, int color) {
+        android.widget.ImageView v = new android.widget.ImageView(c);
+        v.setImageResource(res);
+        v.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+        v.setColorFilter(color);
+        v.setAdjustViewBounds(false);
+        v.setMinimumWidth(dp(c, sizeDp)); v.setMinimumHeight(dp(c, sizeDp));
+        return v;
+    }
+
     public static TextView title(Context c, CharSequence s) {
         TextView t = text(c, s, 20, TEXT);
         t.setTypeface(Typeface.DEFAULT_BOLD);
