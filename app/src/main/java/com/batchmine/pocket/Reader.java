@@ -46,7 +46,9 @@ public final class Reader extends Activity {
         try {
             book = Book.read(new File(app.dir("books"), id + ".json"));
         } catch (IOException | RuntimeException e) { app.report("Could not open book " + id, e); Ui.toast(this, "Could not open the book"); finish(); return; }
-        if (book.chapters.isEmpty()) { Ui.toast(this, "This book has no text"); finish(); return; }
+        String own = sp.getString("btitle_" + id, "");
+        if (!own.isEmpty()) book.title = own;
+                if (book.chapters.isEmpty()) { Ui.toast(this, "This book has no text"); finish(); return; }
         col = new Colourer(app.lang().equals(book.lang) || book.lang.isEmpty() ? app.lang() : book.lang);
         col.colours = sp.getBoolean("colours", true);
         size = sp.getFloat("fs", 19);
@@ -108,7 +110,11 @@ public final class Reader extends Activity {
                 .putFloat("rf_" + book.id, (before + pos) / (float) all).putLong("rt_" + book.id, System.currentTimeMillis()).apply();
     }
 
-    @Override protected void onPause() { super.onPause(); if (book != null && list != null) save(); }
+    @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) { Stopwatch.active(); return super.dispatchTouchEvent(e); }
+
+    @Override protected void onResume() { super.onResume(); Stopwatch.start("read", null); }
+
+    @Override protected void onPause() { super.onPause(); Stopwatch.stop(); if (book != null && list != null) save(); }
 
     private void draw(boolean keep) {
         int at = keep ? list.getFirstVisiblePosition() : firstPara;

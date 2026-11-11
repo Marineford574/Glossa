@@ -50,6 +50,22 @@ public class CoreTest {
     WordStore s2 = new WordStore(sd, "it");
     check("store: saved to disk", s2.isKnown("dopo") && s2.knownCount()==s.knownCount(), s2.knownCount());
     check("pc link parsed", PcLink.parse("http://192.168.1.5:8780/?t=abc_DEF-1").base.equals("http://192.168.1.5:8780") && PcLink.parse("http://x:1/?t=abc").token.equals("abc") && PcLink.parse("nope")==null, "");
+    // series from file names
+    String[][] eps = {
+      {"Il commissario Montalbano S02E03.mkv", "Il commissario Montalbano", "2", "3"},
+      {"Don.Matteo.s1e12.720p.mp4", "Don Matteo", "1", "12"},
+      {"Gomorra 3x07 - La faida.mkv", "Gomorra", "3", "7"},
+      {"Dark - Folge 4.mp4", "Dark", "0", "4"},
+      {"[Subs] Kaguya-sama - 05 [1080p].mkv", "Kaguya-sama", "0", "5"},
+      {"Novine_08.mp4", "Novine", "0", "8"},
+      {"La vita è bella (1997).mp4", "", "0", "-1"},
+      {"Blade Runner 2049.mkv", "", "0", "-1"},
+      {"Suburra Episodio 2.vlink", "Suburra", "0", "2"}};
+    for (String[] e : eps) {
+      Shows.Ep x = Shows.of(e[0]);
+      check("show: " + e[0], x.show.equals(e[1]) && x.season == Integer.parseInt(e[2]) && x.episode == Integer.parseInt(e[3]), x.show + "|" + x.season + "|" + x.episode);
+    }
+    check("show key ignores case and dots", Shows.key("Don Matteo").equals(Shows.key("don.matteo")), "");
     System.out.println(fails == 0 ? "all passed" : fails + " FAILED");
     System.exit(fails == 0 ? 0 : 1);
   }

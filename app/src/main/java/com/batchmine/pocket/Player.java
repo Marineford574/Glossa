@@ -44,7 +44,12 @@ public final class Player extends Activity {
     private double delay;                                // seconds the subtitles are late (+) or early (-), saved for each video
     private boolean autoPause;
     private int pausedAt = -2;
-    private android.widget.Button speedBtn, pauseBtn;
+    private android.widget.Button speedBtn, pauseBtn, markBtn;
+    private boolean prime;                               // primed listening (Settings): a line's translation first, then the sound alone, then the text
+    private int primeLine = -1;
+    private String primePhase = "";                      // "read" (paused, translation) / "listen" (playing, no text) / ""
+    private int loopLeft;                                // plays still to come of the line ↺ repeats (0 = until you go on)
+    private final java.util.Map<Integer, Boolean> qual = new java.util.concurrent.ConcurrentHashMap<>();
 
     static boolean isVideo(String n) {
         n = n.toLowerCase(Locale.ROOT);
@@ -163,7 +168,8 @@ public final class Player extends Activity {
         LinearLayout br2 = Ui.row(this);
         speedBtn = Ui.button(this, "1×", v -> action("speed"));
         pauseBtn = Ui.button(this, "Stop after line: off", v -> action("autopause"));
-        for (android.widget.Button bb : new android.widget.Button[]{speedBtn, Ui.button(this, "Sync ±", v -> action("delay")), pauseBtn, Ui.button(this, "Lines", v -> action("lines"))}) {
+        markBtn = Ui.button(this, "☆", v -> action("mark"));
+        for (android.widget.Button bb : new android.widget.Button[]{speedBtn, markBtn, Ui.button(this, "Sync ±", v -> action("delay")), pauseBtn, Ui.button(this, "Lines", v -> action("lines"))}) {
             bb.setMinWidth(0);
             bb.setPadding(0, 0, 0, 0);
             bb.setTextSize(12);
@@ -181,11 +187,12 @@ public final class Player extends Activity {
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean user) { if (user) timeText.setText(Ui.time(p / 1000.0)); }
             @Override public void onStartTrackingTouch(SeekBar s) { dragging = true; }
-            @Override public void onStopTrackingTouch(SeekBar s) { dragging = false; video.seekTo(s.getProgress()); shown = -2; }
+            @Override public void onStopTrackingTouch(SeekBar s) { dragging = false; video.seekTo(s.getProgress()); shown = -2; primeLine = -1; primePhase = ""; loopUntil = -1; }
         });
         delay = app.prefs().getFloat("delay_" + file.getName(), 0f);
         speed = app.prefs().getFloat("speed", 1f);
         autoPause = app.prefs().getBoolean("autopause", false);
+        prime = app.prefs().getBoolean("prime", false);
         pauseBtn.setText(autoPause ? "Stop after line: on" : "Stop after line: off");
         speedBtn.setText(speedLabel(speed));
         loadSubs();
@@ -195,11 +202,14 @@ public final class Player extends Activity {
             applySpeed();
             seek.setMax(video.getDuration());
             int at = (int) (app.prefs().getFloat("vpos_" + file.getName(), 0) * 1000);
-            if (at > 5000 && at < video.getDuration() - 8000) video.seekTo(at - 2000);
+            double go = getIntent().getDoubleExtra("at", -1);                // from Home → Review: this line
+            if (go >= 0) { video.seekTo((int) (Math.max(0, go - 1.5) * 1000)); getIntent().removeExtra("at"); }
+            else if (at > 5000 && at < video.getDuration() - 8000) video.seekTo(at - 2000);
             video.start();
             h.removeCallbacksAndMessages(null);
             tick();
         });
+        video.setOnCompletionListener(mp -> app.prefs().edit().putBoolean("vdone_" + file.getName(), true).putFloat("vpos_" + file.getName(), 0).putLong("vpost_" + file.getName(), System.currentTimeMillis()).apply());
         video.setOnErrorListener((mp, w, e) -> { Ui.alert(this, "Cannot play this video", "The phone could not play " + file.getName() + (file.getName().endsWith(".vlink") ? " (if you moved or deleted the video, add it again)" : "") + ". MP4 (H.264) works everywhere; other formats depend on the phone."); return true; });
     }
 
@@ -235,7 +245,40 @@ public final class Player extends Activity {
         }
     }
 
-    private void toggle() { if (video.isPlaying()) video.pause(); else video.start(); }
+    private void toggle() {
+        if ("read".equals(primePhase)) { primePhase = "listen"; shown = -2; video.start(); return; }       // read enough: play the line
+        if (video.isPlaying()) video.pause(); else video.start();
+    }
+
+    /** Does primed listening stop at this line? (Settings: every line, or only lines with an unknown word.) */
+    private boolean primes(int i) {
+        if (!"unk".equals(app.prefs().getString("prime_when", "all"))) return true;
+        Boolean q = qual.get(i);
+        return q != null && q;
+    }
+
+    /** Works out, off the screen's thread, which of the next lines have an unknown word (the dictionary is on disk). */
+    private void qualify(int from) {
+        if (!prime || !"unk".equals(app.prefs().getString("prime_when", "all"))) return;
+        app.bg(() -> {
+            for (int k = Math.max(0, from); k < Math.min(main.size(), from + 4); k++) {
+                if (qual.containsKey(k)) continue;
+                boolean unk = false;
+                String text = main.get(k).text;
+                for (int[] w : Subs.words(text)) if (col.state(text.substring(w[0], w[1])).equals("u")) { unk = true; break; }
+                qual.put(k, unk);
+            }
+        });
+    }
+
+    /** Time to read a translation before the line plays: by its length, 1.5 to 8 s. */
+    private long readMs(String tr) { return Math.max(1500, Math.min(8000, 700 + tr.length() * 55L)); }
+
+    private String trFor(Subs.Cue c) {
+        StringBuilder tr = new StringBuilder();
+        for (Subs.Cue x : second) if (x.start < c.end && x.end > c.start) { if (tr.length() > 0) tr.append('\n'); tr.append(x.text); }
+        return tr.toString();
+    }
 
     private void action(String a) {
         double t = video.getCurrentPosition() / 1000.0;
@@ -261,6 +304,14 @@ public final class Player extends Activity {
                 Ui.toast(this, autoPause ? "The video stops at the end of every line: press play for the next" : "Plays on");
                 break;
             case "delay": delayDialog(); break;
+            case "mark": {                                         // ★ the line on screen: it comes back in Home → Review
+                int i = Subs.around(main, t - delay);
+                if (i < 0) { Ui.toast(this, "No line here"); break; }
+                Marks.add(file.getName(), main.get(i).start, main.get(i).text, true);
+                markBtn.setText(Marks.isMarked(file.getName(), main.get(i).start) ? "★" : "☆");
+                Ui.toast(this, Marks.isMarked(file.getName(), main.get(i).start) ? "Marked: it waits in Home → Review" : "Mark taken off");
+                break;
+            }
             case "rotate":      // turn the picture by hand (the phone's own auto-rotate also works)
                 boolean port = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT;
                 setRequestedOrientation(port ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
@@ -269,8 +320,12 @@ public final class Player extends Activity {
             case "repeat": {
                 int i = Subs.around(main, t - delay);
                 if (i < 0) return;
+                Marks.add(file.getName(), main.get(i).start, main.get(i).text, false);       // a line you replay is a hard one
                 loopFrom = main.get(i).start + delay - 0.15;
                 loopUntil = main.get(i).end + delay;
+                int n = app.prefs().getInt("loop_times", 1);
+                loopLeft = n;                                  // 0: round and round until you press next / prev / play on
+                primeLine = i; primePhase = ""; shown = -2;
                 video.seekTo((int) (Math.max(0, loopFrom) * 1000));
                 video.start();
                 break;
@@ -323,17 +378,72 @@ public final class Player extends Activity {
         String[] items = new String[main.size()];
         for (int i = 0; i < items.length; i++) items[i] = Ui.time(main.get(i).start) + "  " + main.get(i).text.replace('\n', ' ');
         int now = Math.max(0, Subs.around(main, video.getCurrentPosition() / 1000.0 - delay));
-        android.app.AlertDialog dlg = Ui.dialog(this).setTitle("All lines (" + items.length + ")").setItems(items, (d, i) -> jump(i)).create();
+        android.app.AlertDialog dlg = Ui.dialog(this).setTitle("All lines (" + items.length + ")").setItems(items, (d, i) -> jump(i))
+                .setNeutralButton("Unknown words", (d, w) -> unknownWords()).create();
         dlg.getListView().setFastScrollEnabled(true);
         dlg.show();
         dlg.getListView().setSelection(now);
     }
 
+    /** The words of this video you do not know yet, most frequent first (the PC's "Make cards" list): tap one for its card in the first line it is in. */
+    private void unknownWords() {
+        if (main.isEmpty()) return;
+        Ui.toast(this, "Counting the unknown words…");
+        app.bg(() -> {
+            java.util.Map<String, int[]> found = new java.util.LinkedHashMap<>();       // word -> {count, first line}
+            java.util.Map<String, Boolean> state = new java.util.HashMap<>();
+            for (int i = 0; i < main.size(); i++) {
+                String text = main.get(i).text;
+                java.util.Set<String> inLine = new java.util.HashSet<>();
+                for (int[] w : Subs.words(text)) {
+                    String word = text.substring(w[0], w[1]).toLowerCase(Locale.ROOT);
+                    if (word.length() < 2 || !inLine.add(word)) continue;
+                    Boolean unk = state.get(word);
+                    if (unk == null) { unk = col.state(word).equals("u"); state.put(word, unk); }
+                    if (!unk) continue;
+                    int[] c = found.get(word);
+                    if (c == null) found.put(word, new int[]{1, i}); else c[0]++;
+                }
+            }
+            List<java.util.Map.Entry<String, int[]>> top = new ArrayList<>(found.entrySet());
+            top.sort((a, b) -> b.getValue()[0] != a.getValue()[0] ? Integer.compare(b.getValue()[0], a.getValue()[0]) : Integer.compare(a.getValue()[1], b.getValue()[1]));
+            if (top.size() > 80) top = new ArrayList<>(top.subList(0, 80));
+            final List<java.util.Map.Entry<String, int[]>> list = top;
+            app.post(() -> {
+                if (list.isEmpty()) { Ui.alert(this, "Unknown words", "No unknown words in these subtitles."); return; }
+                String[] items = new String[list.size()];
+                for (int i = 0; i < items.length; i++) items[i] = list.get(i).getKey() + "   ×" + list.get(i).getValue()[0];
+                Ui.dialog(this).setTitle(found.size() + " unknown words, most frequent first").setItems(items, (d, i) -> {
+                    int line = list.get(i).getValue()[1];
+                    String w = list.get(i).getKey();
+                    video.pause();
+                    tapped(w, 0, main.get(line).text, main.get(line));
+                }).show();
+            });
+        });
+    }
+
     private int nextAfter(double t) { for (int i = 0; i < main.size(); i++) if (main.get(i).start > t) return i; return -1; }
+
+    /** Primed listening, every 120 ms: a new line pauses for its translation, then plays without text, then the text shows. */
+    private void primeStep(int i, double t) {
+        if ("listen".equals(primePhase) && (i != primeLine || t - delay >= main.get(primeLine).end - 0.05)) { primePhase = ""; shown = -2; return; }   // the line is over: its text shows
+        if (i >= 0 && i != primeLine && (t - delay) - main.get(i).start < 0.6 && video.isPlaying()) {
+            primeLine = i;
+            qualify(i + 1);
+            if (!primes(i)) { primePhase = ""; return; }
+            String tr = trFor(main.get(i));
+            if (tr.isEmpty()) { primePhase = "listen"; shown = -2; return; }       // no translation to read: straight to listening
+            primePhase = "read"; shown = -2;
+            video.pause();
+            final int line = i;
+            h.postDelayed(() -> { if ("read".equals(primePhase) && primeLine == line && !isFinishing()) { primePhase = "listen"; shown = -2; video.start(); } }, readMs(tr));
+        }
+    }
 
     private void jump(int i) {
         if (i < 0 || i >= main.size()) return;
-        loopUntil = -1;
+        loopUntil = -1; primeLine = -1; primePhase = "";
         video.seekTo((int) (Math.max(0, main.get(i).start + delay - 0.05) * 1000));
         shown = -2;
         video.start();
@@ -365,8 +475,12 @@ public final class Player extends Activity {
             int pos = video.getCurrentPosition();
             double t = pos / 1000.0;
             if (!dragging) { seek.setProgress(pos); timeText.setText(Ui.time(t)); }
-            if (loopUntil > 0 && t >= loopUntil) { video.seekTo((int) (Math.max(0, loopFrom) * 1000)); }
+            if (loopUntil > 0 && t >= loopUntil) {
+                if (loopLeft == 0 || --loopLeft > 0) video.seekTo((int) (Math.max(0, loopFrom) * 1000));
+                else loopUntil = -1;                           // played as often as asked: on with the film
+            }
             int i = Subs.at(main, t - delay);
+            if (prime && loopUntil < 0) primeStep(i, t);
             if (i != shown) { shown = i; showLine(i); }
             if (autoPause && i >= 0 && i != pausedAt && t - delay >= main.get(i).end - 0.08 && video.isPlaying()) { pausedAt = i; video.pause(); }
             if (i >= 0 && i != pausedAt && t - delay < main.get(i).end - 0.3) pausedAt = -2;
@@ -379,6 +493,14 @@ public final class Player extends Activity {
     private void showLine(int i) {
         if (i < 0) { subText.setVisibility(View.GONE); trText.setVisibility(View.GONE); return; }
         Subs.Cue c = main.get(i);
+        markBtn.setText(Marks.isMarked(file.getName(), c.start) ? "★" : "☆");
+        if (prime && i == primeLine && ("read".equals(primePhase) || "listen".equals(primePhase))) {
+            subText.setVisibility(View.GONE);                              // no text while it is primed: the translation to read, then the sound alone
+            String tr0 = trFor(c);
+            trText.setText(tr0);
+            trText.setVisibility("read".equals(primePhase) && tr0.length() > 0 ? View.VISIBLE : View.GONE);
+            return;
+        }
         final String text = c.text;
         app.bg(() -> {
             CharSequence s = col.spans(text, (word, start, end, tx) -> tapped(word, start, tx, c));
@@ -392,6 +514,7 @@ public final class Player extends Activity {
 
     private void tapped(String word, int at, String text, Subs.Cue c) {
         video.pause();
+        Marks.add(file.getName(), c.start, c.text, false);                  // a line you looked a word up in
         Cards.Request r = new Cards.Request();
         r.lang = lang;
         r.kind = "video";
@@ -413,10 +536,24 @@ public final class Player extends Activity {
         WordSheet.show(this, lang, word, r, () -> { col.forget(); shown = -2; });
     }
 
+    @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) { Stopwatch.active(); return super.dispatchTouchEvent(e); }
+
+    @Override protected void onResume() {
+        super.onResume();
+        Stopwatch.start("watch", () -> video != null && video.isPlaying());     // counts while the video plays, and for a while after a touch
+    }
+
     @Override protected void onPause() {
         super.onPause();
+        Stopwatch.stop();
         if (video != null && file != null) {
-            app.prefs().edit().putFloat("vpos_" + file.getName(), video.getCurrentPosition() / 1000f).putLong("vpost_" + file.getName(), System.currentTimeMillis()).apply();
+            float pos = video.getCurrentPosition() / 1000f, dur = Math.max(0, video.getDuration()) / 1000f;
+            android.content.SharedPreferences.Editor ed = app.prefs().edit().putFloat("vpos_" + file.getName(), pos).putLong("vpost_" + file.getName(), System.currentTimeMillis());
+            if (dur > 30) {
+                ed.putFloat("vdur_" + file.getName(), dur);
+                if (pos > dur - 45 || pos > dur * 0.93f) ed.putBoolean("vdone_" + file.getName(), true);      // watched to the end (credits do not count)
+            }
+            ed.apply();
             video.pause();
         }
     }

@@ -21,6 +21,7 @@ import com.batchmine.pocket.core.Book;
 import com.batchmine.pocket.core.Dict;
 import com.batchmine.pocket.core.Json;
 import com.batchmine.pocket.core.PcLink;
+import com.batchmine.pocket.core.Shows;
 import com.batchmine.pocket.core.WordStore;
 
 import java.io.File;
@@ -36,7 +37,7 @@ import java.util.Map;
 
 /** The main screen: Home (continue, shelves), Books, Videos, Words and Settings, with the language and the sync button on top. */
 public final class MainActivity extends Activity {
-    static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3;
+    static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3, REQ_PHOTO = 4;
     private App app;
     private FrameLayout body;
     private TextView langBtn, status;
@@ -44,7 +45,8 @@ public final class MainActivity extends Activity {
     private static volatile boolean syncing;
     private final List<View> tabs = new ArrayList<>();
     private android.widget.ImageView gear;
-    private String before = "home";                             // the tab to go back to from Settings
+    private String before = "home";
+    private String openShow, openBookId;                       // a series page / a book page is open inside its tab                             // the tab to go back to from Settings
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -100,7 +102,7 @@ public final class MainActivity extends Activity {
             lb.setGravity(Gravity.CENTER);
             lb.setPadding(0, Ui.dp(this, 2), 0, 0);
             v.addView(lb);
-            v.setOnClickListener(x -> { tab = t[0]; show(); });
+            v.setOnClickListener(x -> { if (t[0].equals(tab)) { openShow = null; openBookId = null; } tab = t[0]; show(); });   // the tab again: back to its list
             bar.addView(v, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             tabs.add(v);
         }
@@ -173,12 +175,14 @@ public final class MainActivity extends Activity {
 
     @Override public void onBackPressed() {
         if ("settings".equals(tab)) { tab = before; show(); return; }
+        if (openShow != null || openBookId != null) { openShow = null; openBookId = null; show(); return; }
         if (!"home".equals(tab)) { tab = "home"; show(); return; }
         super.onBackPressed();
     }
 
     @Override protected void onResume() {
         super.onResume(); show();
+        Stopwatch.tidy();
         if (!updateAsked) {
             updateAsked = true;
             if (System.currentTimeMillis() - app.prefs().getLong("update_checked", 0) > 20L * 3600 * 1000) checkUpdate(false);
@@ -266,6 +270,7 @@ public final class MainActivity extends Activity {
                     long t = sp.getLong("rt_" + id, 0);
                     if (t > 0) bp.put(id.substring(2), new ArrayList<Object>(Arrays.asList((double) sp.getFloat("rf_" + id, 0), (double) t)));
                 }
+                out.put("stopwatch", Stopwatch.forSync(14));
                 out.put("video_pos", vp);
                 out.put("book_pos", bp);
             }
@@ -325,7 +330,7 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < 3; i++) {
             LinearLayout t = Ui.col(this);
             t.setPadding(Ui.dp(this, 12), Ui.dp(this, 10), Ui.dp(this, 12), Ui.dp(this, 10));
-            t.setBackground(Ui.round(Ui.CARD, Ui.dp(this, 14)));
+            t.setBackground(Ui.press(Ui.CARD, Ui.LINE, Ui.dp(this, Ui.R)));
             TextView n = Ui.text(this, String.valueOf(vals[i]), 22, i == 1 && vals[i] > 0 ? Ui.ACCENT : Ui.TEXT);
             n.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
             t.addView(n);
@@ -337,6 +342,9 @@ public final class MainActivity extends Activity {
         if (app.pc() == null) {
             Ui.add(l, Ui.item(this, "Link the PC", "Paste the link from Glossa on the PC (Settings → Phone access) to exchange words, cards and where you stopped.", v -> { toSettings(); }), 14);
         }
+
+        weekBox(l);
+        reviewBox(l);
 
         // continue: the videos and books touched last, newest first
         List<Object[]> recent = new ArrayList<>();          // {time, view}
@@ -364,7 +372,7 @@ public final class MainActivity extends Activity {
         if (recent.isEmpty()) l.addView(Ui.hint(this, "Open a book or a video and it waits here, at the place you stopped."));
         for (int i = 0; i < Math.min(4, recent.size()); i++) {
             View it = (View) recent.get(i)[1];
-            if (i == 0) it.setBackground(Ui.round(Ui.mix(Ui.CARD, Ui.ACCENT, 0.16f), Ui.dp(this, 14)));
+            if (i == 0) it.setBackground(Ui.press(Ui.mix(Ui.CARD, Ui.ACCENT, 0.16f), Ui.mix(Ui.LINE, Ui.ACCENT, 0.4f), Ui.dp(this, Ui.R)));
             Ui.add(l, it, 8);
         }
 
@@ -386,6 +394,104 @@ public final class MainActivity extends Activity {
             return out;
         });
         return Ui.scroll(this, l);
+    }
+
+    /** The time of the last 7 days (watching and reading on this phone), like the PC's week chart. */
+    private void weekBox(LinearLayout l) {
+        int[] w = new int[7], r = new int[7];
+        String[] names = new String[7];
+        int max = 1, tw = 0, tr = 0;
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        for (int i = 6; i >= 0; i--) {
+            String d = Stopwatch.day(c.getTimeInMillis());
+            names[i] = c.getDisplayName(java.util.Calendar.DAY_OF_WEEK, java.util.Calendar.SHORT, Locale.getDefault());
+            w[i] = Math.round(Stopwatch.seconds(d, "watch") / 60f); r[i] = Math.round(Stopwatch.seconds(d, "read") / 60f);
+            max = Math.max(max, w[i] + r[i]); tw += w[i]; tr += r[i];
+            c.add(java.util.Calendar.DAY_OF_MONTH, -1);
+        }
+        if (tw + tr == 0) return;
+        l.addView(Ui.title(this, "This week"));
+        LinearLayout card = Ui.card(this);
+        LinearLayout bars = Ui.row(this);
+        bars.setGravity(Gravity.BOTTOM);
+        int bar = Ui.dp(this, 70);
+        for (int i = 0; i < 7; i++) {          // oldest day first, today last
+            int k = i;
+            LinearLayout col = Ui.col(this);
+            col.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+            TextView mn = Ui.text(this, w[k] + r[k] > 0 ? String.valueOf(w[k] + r[k]) : "", 10, Ui.DIM);
+            mn.setGravity(Gravity.CENTER);
+            col.addView(mn);
+            View rd = new View(this); rd.setBackground(Ui.round(Ui.mix(Ui.ACCENT, Ui.BG, 0.45f), 3));
+            View wt = new View(this); wt.setBackground(Ui.round(Ui.ACCENT, 3));
+            if (r[k] > 0) col.addView(rd, new LinearLayout.LayoutParams(Ui.dp(this, 18), Math.max(3, bar * r[k] / max)));
+            if (w[k] > 0) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(Ui.dp(this, 18), Math.max(3, bar * w[k] / max)); p.topMargin = r[k] > 0 ? 2 : 0; col.addView(wt, p); }
+            TextView nm = Ui.text(this, names[k], 11, k == 6 ? Ui.TEXT : Ui.DIM);
+            nm.setGravity(Gravity.CENTER);
+            nm.setPadding(0, Ui.dp(this, 4), 0, 0);
+            col.addView(nm);
+            bars.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        card.addView(bars);
+        TextView sum = Ui.text(this, tw + " min watched · " + tr + " min read  (on this phone; the PC adds it to its own chart at each sync)", 12, Ui.DIM);
+        sum.setPadding(0, Ui.dp(this, 10), 0, 0);
+        card.addView(sum);
+        Ui.add(l, card, 8);
+    }
+
+    /** Lines to come back to (marked ★ or stumbled on) per video, like the PC's Home → Review. */
+    private void reviewBox(LinearLayout l) {
+        File[] fs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+        List<File> with = new ArrayList<>();
+        if (fs != null) for (File f : fs) { int[] c = Marks.counts(f.getName()); if (c[0] + c[1] > 0) with.add(f); }
+        if (with.isEmpty()) return;
+        with.sort((a, b) -> Long.compare(app.prefs().getLong("vpost_" + b.getName(), 0), app.prefs().getLong("vpost_" + a.getName(), 0)));
+        int total = 0;
+        for (File f : with) { int[] c = Marks.counts(f.getName()); total += c[0] + c[1]; }
+        LinearLayout head = Ui.row(this);
+        head.addView(Ui.weight(Ui.title(this, "Review"), 1));
+        TextView n = Ui.text(this, total + (total == 1 ? " line" : " lines"), 13, Ui.DIM);
+        head.addView(n);
+        Ui.add(l, head, 0);
+        l.addView(Ui.hint(this, "Lines you marked ★ or stumbled on (replayed, looked a word up in) and made no card of yet."));
+        LinearLayout g = Ui.card(this);
+        g.setPadding(Ui.dp(this, 14), Ui.dp(this, 4), Ui.dp(this, 14), Ui.dp(this, 4));
+        for (int i = 0; i < Math.min(5, with.size()); i++) {
+            File f = with.get(i);
+            int[] c = Marks.counts(f.getName());
+            if (i > 0) { View line = new View(this); line.setBackgroundColor(Ui.LINE); g.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)); }
+            LinearLayout r = Ui.row(this);
+            r.setPadding(0, Ui.dp(this, 10), 0, Ui.dp(this, 10));
+            TextView t = Ui.text(this, Player.niceName(f), 15, Ui.TEXT);
+            t.setSingleLine(true); t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            r.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView ct = Ui.text(this, (c[0] > 0 ? c[0] + " ★" : "") + (c[0] > 0 && c[1] > 0 ? " · " : "") + (c[1] > 0 ? c[1] + " hard" : ""), 13, Ui.DIM);
+            ct.setPadding(Ui.dp(this, 10), 0, 0, 0);
+            r.addView(ct);
+            r.setOnClickListener(v -> reviewLines(f));
+            g.addView(r);
+        }
+        Ui.add(l, g, 8);
+    }
+
+    /** The lines of one video to review: tap one to watch it there; long-press to take it off the list. */
+    private void reviewLines(File f) {
+        List<Marks.Line> ls = Marks.list(f.getName());
+        if (ls.isEmpty()) { show(); return; }
+        String[] items = new String[ls.size()];
+        for (int i = 0; i < items.length; i++) items[i] = (ls.get(i).marked() ? "★ " : "") + Ui.time(ls.get(i).start) + "  " + ls.get(i).text;
+        android.app.AlertDialog dlg = Ui.dialog(this).setTitle(Player.niceName(f) + " (" + items.length + ")")
+                .setItems(items, (d, i) -> { Intent it = new Intent(this, Player.class); it.putExtra("path", f.getPath()); it.putExtra("at", ls.get(i).start); startActivity(it); })
+                .setNeutralButton("Clear all", (d, w) -> { Marks.clear(f.getName()); show(); })
+                .setNegativeButton("Close", null).create();
+        dlg.setOnShowListener(x -> dlg.getListView().setOnItemLongClickListener((a, v, pos, id) -> {
+            Marks.remove(f.getName(), ls.get(pos).start);
+            Ui.dismiss(dlg);
+            show();
+            reviewLines(f);
+            return true;
+        }));
+        if (!Ui.gone(this)) dlg.show();
     }
 
     private interface Covers { List<View> make(); }
@@ -422,7 +528,7 @@ public final class MainActivity extends Activity {
         art.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         art.setGravity(Gravity.CENTER);
         int h = Math.abs(title.hashCode());
-        art.setBackground(Ui.round(Ui.mix(Ui.ACCENT, (h & 1) == 0 ? Ui.BG : Ui.TEXT, 0.15f + (h % 5) * 0.08f), Ui.dp(this, 12)));
+        art.setBackground(Ui.round(Ui.mix(Ui.ACCENT, (h & 1) == 0 ? Ui.BG : Ui.TEXT, 0.15f + (h % 5) * 0.08f), Ui.dp(this, Ui.RS)));
         c.addView(art, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 92)));
         TextView tt = Ui.text(this, title, 13, Ui.TEXT);
         tt.setMaxLines(2);
@@ -449,31 +555,120 @@ public final class MainActivity extends Activity {
 
     // ================================================================ books
     private View books() {
+        if (openBookId != null) for (BookInfo bk : bookList(app.lang())) if (bk.id.equals(openBookId)) return bookPage(bk);
+        openBookId = null;
         LinearLayout l = Ui.col(this);
         l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 12));
         LinearLayout acts = Ui.row(this);
         acts.addView(Ui.weight(Ui.primary(this, "Add a book", v -> pick(REQ_BOOK, new String[]{"application/epub+zip", "text/plain"}, false)), 1));
         acts.addView(Ui.weight(Ui.button(this, "From the PC", v -> pcBooks()), 1));
         Ui.add(l, acts, 8);
+        Ui.add(l, Ui.button(this, "📷  Photo of a page (the PC reads it)", v -> {
+            if (app.pc() == null) { Ui.toast(this, "Link the PC first (Settings)"); return; }
+            Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+            i.setType("image/*");
+            i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            startActivityForResult(Intent.createChooser(i, "Photos of the pages"), REQ_PHOTO);
+        }), 8);
         String lang = app.lang();
         List<BookInfo> books = bookList(lang);
         if (books.isEmpty()) l.addView(Ui.hint(this, "No " + lang.toUpperCase(Locale.ROOT) + " books yet. Add an EPUB or text file from the phone, or copy a book from the Reader on the PC."));
         for (BookInfo bk : books) {
             int[] pos = Reader.position(bk.id);
             String sub = bk.chapters + " chapters" + (pos[0] > 0 || pos[1] > 0 ? " · at chapter " + (pos[0] + 1) : "");
-            LinearLayout it = Ui.item(this, bk.title, sub, v -> { Intent i = new Intent(this, Reader.class); i.putExtra("id", bk.id); startActivity(i); });
-            it.setOnLongClickListener(v -> {
-                Ui.dialog(this).setTitle(bk.title).setItems(new String[]{"Delete this book"}, (d, w) -> { bk.file.delete(); show(); }).show();
-                return true;
-            });
+            LinearLayout it = Ui.item(this, bk.title, sub, v -> { openBookId = bk.id; show(); });
+            float frac = app.prefs().getFloat("rf_" + bk.id, 0);
+            if (frac > 0.005f) { View pr = Ui.progress(this, frac); ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8); it.addView(pr); }
+            it.setOnLongClickListener(v -> { bookMenu(bk); return true; });
             Ui.add(l, it, 8);
         }
         return Ui.scroll(this, l);
     }
 
+    private void bookMenu(BookInfo bk) {
+        Ui.dialog(this).setTitle(bk.title).setItems(new String[]{"Rename…", "Delete this book"}, (d, w) -> {
+            if (w == 0) renameBook(bk);
+            else Ui.dialog(this).setTitle("Delete “" + bk.title + "”?").setMessage("The book is removed from the phone (the PC keeps its copy).")
+                    .setPositiveButton("Delete", (d2, i) -> { bk.file.delete(); openBookId = null; show(); }).setNegativeButton("Keep", null).show();
+        }).show();
+    }
+
+    private void renameBook(BookInfo bk) {
+        android.widget.EditText in = Ui.input(this, bk.title, "Title");
+        in.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        LinearLayout box = Ui.col(this);
+        box.setPadding(Ui.dp(this, 20), Ui.dp(this, 8), Ui.dp(this, 20), 0);
+        box.addView(in);
+        Ui.dialog(this).setTitle("Rename the book").setView(box)
+                .setPositiveButton("Rename", (d, i) -> {
+                    String t = in.getText().toString().trim();
+                    app.prefs().edit().putString("btitle_" + bk.id, t).apply();     // "" = back to the book's own title
+                    show();
+                })
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    /** The page of one book: where you are, Continue, contents, rename, delete (like the PC's Library). */
+    private View bookPage(BookInfo bk) {
+        LinearLayout l = Ui.col(this);
+        int pad = Ui.dp(this, 12);
+        l.setPadding(pad, 0, pad, pad * 2);
+        l.addView(backRow("Books", () -> { openBookId = null; show(); }));
+        LinearLayout hero = Ui.card(this);
+        TextView art = Ui.text(this, initials(bk.title), 30, Ui.ON_ACC);
+        art.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        art.setGravity(Gravity.CENTER);
+        int h = Math.abs(bk.title.hashCode());
+        art.setBackground(Ui.round(Ui.mix(Ui.ACCENT, (h & 1) == 0 ? Ui.BG : Ui.TEXT, 0.15f + (h % 5) * 0.08f), Ui.dp(this, Ui.RS)));
+        LinearLayout top = Ui.row(this);
+        top.addView(art, new LinearLayout.LayoutParams(Ui.dp(this, 76), Ui.dp(this, 100)));
+        LinearLayout tx = Ui.col(this);
+        tx.setPadding(Ui.dp(this, 14), 0, 0, 0);
+        TextView tt = Ui.text(this, bk.title, 19, Ui.TEXT);
+        tt.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        tx.addView(tt);
+        float frac = app.prefs().getFloat("rf_" + bk.id, 0);
+        int[] pos = Reader.position(bk.id);
+        long t = app.prefs().getLong("rt_" + bk.id, 0);
+        TextView st = Ui.text(this, bk.chapters + " chapters · " + Math.round(frac * 100) + "% read" + (t > 0 ? " · " + Ui.ago(t) : ""), 13, Ui.DIM);
+        st.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 8));
+        tx.addView(st);
+        tx.addView(Ui.progress(this, frac));
+        if (bk.id.startsWith("pc")) tx.addView(Ui.hint(this, "From the Reader on the PC: your place is kept in step."));
+        top.addView(tx, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        hero.addView(top);
+        Ui.add(l, hero, 12);
+        Ui.add(l, Ui.primary(this, frac > 0.005f ? "Continue · chapter " + (pos[0] + 1) : "Start reading", v -> openBook(bk)), 8);
+        Ui.add(l, Ui.buttons(this, Ui.button(this, "Contents", v -> bookContents(bk)), Ui.button(this, "Rename", v -> renameBook(bk)),
+                Ui.button(this, "Delete", v -> bookMenu(bk))), 8);
+        return Ui.scroll(this, l);
+    }
+
+    private void bookContents(BookInfo bk) {
+        app.bg(() -> {
+            try {
+                Book b = Book.read(bk.file);
+                String[] names = new String[b.chapters.size()];
+                for (int i = 0; i < names.length; i++) names[i] = (i + 1) + ". " + b.chapters.get(i).title;
+                app.post(() -> Ui.dialog(this).setTitle("Contents").setItems(names, (d, i) -> {
+                    app.prefs().edit().putInt("rc_" + bk.id, i).putInt("rp_" + bk.id, 0).apply();
+                    openBook(bk);
+                }).show());
+            } catch (IOException | RuntimeException e) { app.post(() -> Ui.toast(this, "Could not open the book")); }
+        });
+    }
+
+    /** "‹ Videos": the way back from a series or book page. */
+    private View backRow(String name, Runnable back) {
+        TextView b = Ui.text(this, "‹  " + name, 15, Ui.ACCENT);
+        b.setPadding(Ui.dp(this, 4), Ui.dp(this, 12), Ui.dp(this, 16), Ui.dp(this, 12));
+        b.setOnClickListener(v -> back.run());
+        return b;
+    }
+
     /** What the book list shows of a book; read once per file version (books can be megabytes). */
     static final class BookInfo {
-        File file; long stamp; String id, title, lang; int chapters;
+        File file; long stamp; String id, title, orig, lang; int chapters;
     }
 
     private static final Map<String, BookInfo> bookCache = new java.util.HashMap<>();
@@ -493,6 +688,9 @@ public final class MainActivity extends Activity {
                     bookCache.put(f.getPath(), bi);
                 } catch (IOException | RuntimeException e) { continue; }
             }
+            String own = app.prefs().getString("btitle_" + bi.id, "");           // a name you gave it here
+            if (bi.orig == null) bi.orig = bi.title;
+            bi.title = own.isEmpty() ? bi.orig : own;
             if (bi.lang.isEmpty() || bi.lang.equals(lang)) out.add(bi);
         }
         return out;
@@ -529,6 +727,7 @@ public final class MainActivity extends Activity {
 
     // ================================================================ videos
     private View videos() {
+        if (openShow != null) { View v = showPage(openShow); if (v != null) return v; openShow = null; }
         LinearLayout l = Ui.col(this);
         l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 12));
         LinearLayout acts = Ui.row(this);
@@ -539,26 +738,133 @@ public final class MainActivity extends Activity {
         if (fs == null || fs.length == 0) {
             l.addView(Ui.hint(this, "No videos yet. “Add a video” takes a video from the phone together with its subtitle files (.srt / .vtt / .ass): choose them all in one go. “From the PC” copies an episode and its subtitles over Wi-Fi."));
         } else {
+            Map<String, List<File>> groups = showGroups(fs);
+            List<File> singles = new ArrayList<>();
+            for (File f : fs) { Shows.Ep e = Shows.of(Player.videoName(f)); if (e.show.isEmpty() || !groups.containsKey(Shows.key(e.show))) singles.add(f); }
             Arrays.sort(fs);
-            for (File f : fs) {
-                int subs = Player.subsOf(f).size();
-                double at = app.prefs().getFloat("vpos_" + f.getName(), 0);
-                boolean linked = f.getName().endsWith(".vlink");
-                long fsize = linked ? linkSize(f) : f.length();
-                LinearLayout it = Ui.item(this, Player.niceName(f), (fsize < 0 ? "video not found (add it again)" : Ui.size(fsize) + (linked ? " (stays where it is)" : "")) + " · " + (subs == 0 ? "no subtitles" : subs + " subtitle file" + (subs > 1 ? "s" : "")) + (at > 5 ? " · at " + Ui.time(at) : ""),
-                        v -> { Intent i = new Intent(this, Player.class); i.putExtra("path", f.getPath()); startActivity(i); });
-                it.setOnLongClickListener(v -> {
-                    Ui.dialog(this).setTitle(f.getName()).setItems(new String[]{f.getName().endsWith(".vlink") ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles"}, (d, w) -> {
-                        for (File s : Player.subsOf(f)) s.delete();
-                        f.delete();
-                        show();
-                    }).show();
-                    return true;
-                });
-                Ui.add(l, it, 8);
-            }
+            android.content.SharedPreferences sp = app.prefs();
+            List<String> keys = new ArrayList<>(groups.keySet());
+            keys.sort((x, y) -> Long.compare(lastTouched(groups.get(y)), lastTouched(groups.get(x))));
+            if (!keys.isEmpty()) l.addView(Ui.title(this, "Series"));
+            for (String k : keys) Ui.add(l, showCard(k, groups.get(k)), 8);
+            if (!singles.isEmpty()) l.addView(Ui.title(this, keys.isEmpty() ? "Videos" : "Single videos"));
+            for (File f : singles) Ui.add(l, videoItem(f, false), 8);
         }
         return Ui.scroll(this, l);
+    }
+
+    /** The videos that belong to one show (two or more files with the same show name), episodes in order. */
+    private Map<String, List<File>> showGroups(File[] fs) {
+        Map<String, List<File>> m = new java.util.LinkedHashMap<>();
+        for (File f : fs) {
+            Shows.Ep e = Shows.of(Player.videoName(f));
+            if (!e.show.isEmpty()) m.computeIfAbsent(Shows.key(e.show), k -> new ArrayList<>()).add(f);
+        }
+        m.values().removeIf(x -> x.size() < 2);
+        for (List<File> x : m.values()) x.sort((p, q) -> {
+            Shows.Ep a = Shows.of(Player.videoName(p)), b = Shows.of(Player.videoName(q));
+            return a.order() != b.order() ? Long.compare(a.order(), b.order()) : p.getName().compareToIgnoreCase(q.getName());
+        });
+        return m;
+    }
+
+    private long lastTouched(List<File> eps) {
+        long t = 0;
+        for (File f : eps) t = Math.max(t, app.prefs().getLong("vpost_" + f.getName(), 0));
+        return t;
+    }
+
+    private boolean watched(File f) { return app.prefs().getBoolean("vdone_" + f.getName(), false); }
+
+    /** The episode to go on with: the one you left in the middle, else the first not watched after the last watched one. */
+    private File nextEpisode(List<File> eps) {
+        File mid = null; long best = -1;
+        for (File f : eps) {
+            float at = app.prefs().getFloat("vpos_" + f.getName(), 0);
+            long t = app.prefs().getLong("vpost_" + f.getName(), 0);
+            if (!watched(f) && at > 5 && t > best) { mid = f; best = t; }
+        }
+        if (mid != null) return mid;
+        int last = -1;
+        for (int i = 0; i < eps.size(); i++) if (watched(eps.get(i))) last = i;
+        for (int i = last + 1; i < eps.size(); i++) if (!watched(eps.get(i))) return eps.get(i);
+        for (File f : eps) if (!watched(f)) return f;
+        return eps.get(0);
+    }
+
+    private String showName(List<File> eps) { return Shows.of(Player.videoName(eps.get(0))).show; }
+
+    private View showCard(String key, List<File> eps) {
+        int done = 0;
+        for (File f : eps) if (watched(f)) done++;
+        File nx = nextEpisode(eps);
+        Shows.Ep ne = Shows.of(Player.videoName(nx));
+        String sub = eps.size() + " episodes · " + done + " watched" + (done < eps.size() ? " · next: " + ne.label() : " · all watched");
+        LinearLayout it = Ui.item(this, showName(eps), sub, v -> { openShow = key; show(); });
+        View pr = Ui.progress(this, done / (float) eps.size());
+        ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8);
+        it.addView(pr);
+        return it;
+    }
+
+    /** The page of one show: its episodes in order, the one to continue with, which are watched (like the PC's series page). */
+    private View showPage(String key) {
+        File[] fs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+        List<File> eps = fs == null ? null : showGroups(fs).get(key);
+        if (eps == null) return null;
+        LinearLayout l = Ui.col(this);
+        int pad = Ui.dp(this, 12);
+        l.setPadding(pad, 0, pad, pad * 2);
+        l.addView(backRow("Videos", () -> { openShow = null; show(); }));
+        int done = 0;
+        for (File f : eps) if (watched(f)) done++;
+        LinearLayout hero = Ui.card(this);
+        TextView tt = Ui.text(this, showName(eps), 20, Ui.TEXT);
+        tt.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        hero.addView(tt);
+        TextView st = Ui.text(this, eps.size() + " episodes · " + done + " watched · " + Math.round(done * 100f / eps.size()) + "%", 13, Ui.DIM);
+        st.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 8));
+        hero.addView(st);
+        hero.addView(Ui.progress(this, done / (float) eps.size()));
+        Ui.add(l, hero, 12);
+        File nx = nextEpisode(eps);
+        float at = app.prefs().getFloat("vpos_" + nx.getName(), 0);
+        String what = Shows.of(Player.videoName(nx)).label();
+        Ui.add(l, Ui.primary(this, done == eps.size() ? "Watch again · " + what : (at > 5 && !watched(nx) ? "Continue · " + what + " at " + Ui.time(at) : "Play · " + what), v -> openVideo(nx)), 12);
+        for (File f : eps) Ui.add(l, videoItem(f, true), 8);
+        return Ui.scroll(this, l);
+    }
+
+    /** One video in a list. IN_SHOW: the episode number leads and watched ones are ticked. */
+    private LinearLayout videoItem(File f, boolean inShow) {
+        int subs = Player.subsOf(f).size();
+        double at = app.prefs().getFloat("vpos_" + f.getName(), 0);
+        boolean linked = f.getName().endsWith(".vlink");
+        long fsize = linked ? linkSize(f) : f.length();
+        boolean done = watched(f);
+        Shows.Ep e = Shows.of(Player.videoName(f));
+        String head = inShow ? (done ? "✓  " : "") + (e.episode >= 0 ? e.label() : Player.niceName(f)) : Player.niceName(f);
+        String sub = (fsize < 0 ? "video not found (add it again)" : Ui.size(fsize) + (linked ? " (stays where it is)" : "")) + " · " + (subs == 0 ? "no subtitles" : subs + " subtitle file" + (subs > 1 ? "s" : ""))
+                + (done ? " · watched" : at > 5 ? " · at " + Ui.time(at) : "");
+        LinearLayout it = Ui.item(this, head, sub, v -> openVideo(f));
+        float dur = app.prefs().getFloat("vdur_" + f.getName(), 0);
+        if (!done && at > 5 && dur > 30) { View pr = Ui.progress(this, (float) (at / dur)); ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8); it.addView(pr); }
+        it.setOnLongClickListener(v -> {
+            String[] acts = {done ? "Mark as not watched" : "Mark as watched", linked ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles"};
+            Ui.dialog(this).setTitle(Player.niceName(f)).setItems(acts, (d, w) -> {
+                if (w == 0) {
+                    android.content.SharedPreferences.Editor ed = app.prefs().edit().putBoolean("vdone_" + f.getName(), !done).putLong("vpost_" + f.getName(), System.currentTimeMillis());
+                    if (done) ed.putFloat("vpos_" + f.getName(), 0);
+                    ed.apply();
+                } else {
+                    for (File s : Player.subsOf(f)) s.delete();
+                    f.delete();
+                }
+                show();
+            }).show();
+            return true;
+        });
+        return it;
     }
 
     /** Size of a video that is only linked; -1 when it is gone. */
@@ -620,13 +926,18 @@ public final class MainActivity extends Activity {
     }
 
     // ================================================================ words
+    private String wordFilter = "";
+
     private View words() {
         LinearLayout l = Ui.col(this);
         l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 12));
         WordStore ws = app.store();
         List<Map<String, Object>> pend = ws.pending();
         if (!pend.isEmpty()) {
-            l.addView(Ui.title(this, pend.size() + " card(s) waiting for the PC"));
+            LinearLayout head = Ui.row(this);
+            head.addView(Ui.weight(Ui.title(this, pend.size() + " card(s) waiting"), 1));
+            head.addView(Ui.small(this, "Send now", v -> sync()));
+            Ui.add(l, head, 0);
             for (Map<String, Object> c : pend) {
                 String id = Json.str(c.get("id"), "");
                 Ui.add(l, Ui.item(this, Json.str(c.get("word"), ""), Json.str(c.get("sentence"), ""), v ->
@@ -634,56 +945,85 @@ public final class MainActivity extends Activity {
             }
         }
         List<Map<String, Object>> saved = ws.saved();
-        l.addView(Ui.title(this, "Saved words"));
+        l.addView(Ui.title(this, "Saved words" + (saved.isEmpty() ? "" : " (" + saved.size() + ")")));
         if (saved.isEmpty()) l.addView(Ui.hint(this, "Tap “Save” in a word card to keep a word for later."));
-        for (Map<String, Object> s : saved) {
-            String w = Json.str(s.get("word"), "");
-            Ui.add(l, Ui.item(this, w, Json.str(s.get("sentence"), ""), v -> {
-                Cards.Request r = new Cards.Request();
-                r.lang = app.lang(); r.sentence = Json.str(s.get("sentence"), ""); r.title = Json.str(s.get("source"), "");
-                WordSheet.show(this, app.lang(), w, r, this::show);
-            }), 6);
+        if (saved.size() > 6) {
+            android.widget.EditText q = Ui.input(this, wordFilter, "Search words, sentences, sources");
+            q.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+            q.addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+                @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
+                @Override public void afterTextChanged(android.text.Editable e) { wordFilter = e.toString(); fillSaved(l, saved, q); }
+            });
+            Ui.add(l, q, 8);
         }
+        fillSaved(l, saved, null);
         return Ui.scroll(this, l);
+    }
+
+    /** The saved words that match the search; redrawn in place while you type (the search box keeps its focus). */
+    private void fillSaved(LinearLayout l, List<Map<String, Object>> saved, android.widget.EditText box) {
+        for (int i = l.getChildCount() - 1; i >= 0; i--) if ("saved".equals(l.getChildAt(i).getTag())) l.removeViewAt(i);
+        String f = wordFilter.trim().toLowerCase(Locale.ROOT);
+        int shown = 0;
+        for (Map<String, Object> s : saved) {
+            String w = Json.str(s.get("word"), ""), sn = Json.str(s.get("sentence"), ""), src = Json.str(s.get("source"), "");
+            if (!f.isEmpty() && !(w + " " + sn + " " + src).toLowerCase(Locale.ROOT).contains(f)) continue;
+            LinearLayout it = Ui.item(this, w, sn + (src.isEmpty() ? "" : "\n" + src), v -> {
+                Cards.Request r = new Cards.Request();
+                r.lang = app.lang(); r.sentence = sn; r.title = src;
+                WordSheet.show(this, app.lang(), w, r, this::show);
+            });
+            it.setTag("saved");
+            Ui.add(l, it, 6);
+            if (++shown >= 150) break;
+        }
+        if (shown == 0 && !saved.isEmpty()) { TextView t = Ui.hint(this, "Nothing matches “" + wordFilter + "”."); t.setTag("saved"); l.addView(t); }
     }
 
     // ================================================================ settings
     private View settings() {
         LinearLayout l = Ui.col(this);
         int pad = Ui.dp(this, 12);
-        l.setPadding(pad, 0, pad, pad);
-        l.addView(Ui.title(this, "The PC"));
-        l.addView(Ui.hint(this, "On the PC: Glossa → Settings → Phone access → switch it on, then copy the link and paste it here. The phone and the PC need to be on the same Wi-Fi (or both on Tailscale)."));
+        l.setPadding(pad, 0, pad, pad * 2);
+        TextView head = Ui.title(this, "Settings");
+        l.addView(head);
+
+        // ---- the PC
+        l.addView(Ui.section(this, "The PC"));
+        LinearLayout g = Ui.group(this);
         PcLink pc = app.pc();
+        LinearLayout lk = Ui.col(this);
+        lk.setPadding(0, Ui.dp(this, 12), 0, Ui.dp(this, 12));
+        TextView lt = Ui.text(this, pc == null ? "Not linked" : "Linked to " + pc.base.replaceFirst("^https?://", ""), 15, Ui.TEXT);
+        lt.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+        lk.addView(lt);
+        TextView lh = Ui.hint(this, "On the PC: Glossa → Phone (gear menu) → switch Phone access on, copy the link and paste it here. Same Wi-Fi, or both on Tailscale.");
+        lk.addView(lh);
         android.widget.EditText link = Ui.input(this, pc == null ? "" : pc.link(), "http://192.168.1.20:8780/?t=…");
-        Ui.add(l, link, 6);
-        LinearLayout r = Ui.row(this);
-        r.addView(Ui.weight(Ui.primary(this, "Save and test", v -> {
+        Ui.add(lk, link, 8);
+        lk.addView(Ui.buttons(this, Ui.primary(this, "Save and test", v -> {
             PcLink p = PcLink.parse(link.getText().toString());
             if (p == null) { Ui.toast(this, "That is not a Glossa link (it has ?t=… at the end)"); return; }
             app.prefs().edit().putString("pc_link", p.link()).apply();
             app.bg(() -> {
                 try {
                     Map<String, Object> h = p.get("/api/pocket/hello", 6000);
-                    app.post(() -> Ui.alert(this, "Connected", "Glossa on “" + Json.str(h.get("name"), "the PC") + "” answered." + (Boolean.TRUE.equals(h.get("anki")) ? "\nAnki is open there." : "\nAnki is not open there (cards wait until it is).")));
+                    app.post(() -> { Ui.alert(this, "Connected", "Glossa on “" + Json.str(h.get("name"), "the PC") + "” answered." + (Boolean.TRUE.equals(h.get("anki")) ? "\nAnki is open there." : "\nAnki is not open there (cards wait until it is).")); show(); });
                 } catch (IOException e) { app.post(() -> Ui.alert(this, "Not connected", explain(e))); }
             });
-        }), 1));
-        r.addView(Ui.weight(Ui.button(this, "Forget", v -> { app.prefs().edit().remove("pc_link").apply(); show(); }), 1));
-        Ui.add(l, r, 12);
+        }), Ui.button(this, "Forget", v -> { app.prefs().edit().remove("pc_link").apply(); show(); })));
+        g.addView(lk);
+        Ui.switchRow(g, "Sync by itself", "When the app opens (at most every 10 minutes). If the PC is off nothing happens.", app.prefs().getBoolean("auto_sync", true),
+                (b, on) -> app.prefs().edit().putBoolean("auto_sync", on).apply());
+        Ui.add(l, g, 0);
+        l.addView(Ui.hint(this, "Exchanged: known and looked-up words, waiting cards, where you stopped in videos and books, and the time you spent watching and reading."));
 
-        android.widget.CheckBox au = new android.widget.CheckBox(this);
-        au.setText("Sync by itself when the app opens");
-        au.setTextColor(Ui.TEXT);
-        au.setChecked(app.prefs().getBoolean("auto_sync", true));
-        au.setOnCheckedChangeListener((b, on) -> app.prefs().edit().putBoolean("auto_sync", on).apply());
-        Ui.add(l, au, 4);
-        l.addView(Ui.hint(this, "Known words, looked-up words, waiting cards and where you stopped in videos and books are exchanged with the PC. If the PC is off nothing happens."));
-
-        l.addView(Ui.title(this, "Look"));
+        // ---- look
+        l.addView(Ui.section(this, "Look"));
+        g = Ui.group(this);
         String cur = app.prefs().getString("theme", "pc");
-        l.addView(Ui.hint(this, "The colours follow the theme you picked in Glossa on the PC (Look and window) after each sync. You can also pick one here."));
-        Ui.add(l, Ui.item(this, "Theme", "pc".equals(cur) ? "Same as on the PC" : Ui.themeName(cur), v -> {
+        Ui.pickRow(g, "Theme", "pc".equals(cur) ? "Same as the PC" : Ui.themeName(cur), v -> {
             String[] names = new String[Ui.THEMES.length + 1];
             names[0] = "Same as on the PC";
             for (int i = 0; i < Ui.THEMES.length; i++) names[i + 1] = Ui.THEMES[i][1];
@@ -692,10 +1032,9 @@ public final class MainActivity extends Activity {
                 Ui.load(this);
                 recreate();
             }).show();
-        }), 12);
-
+        });
         String acc = app.prefs().getString("accent", "");
-        Ui.add(l, Ui.item(this, "Accent colour", acc.isEmpty() ? "The theme's own" : Ui.accentName(acc), v -> {
+        Ui.pickRow(g, "Accent colour", acc.isEmpty() ? "The theme's own" : Ui.accentName(acc), v -> {
             String[] names = new String[Ui.ACCENTS.length];
             for (int i = 0; i < names.length; i++) names[i] = Ui.ACCENTS[i][0];
             Ui.dialog(this).setTitle("Accent colour").setItems(names, (dl, i) -> {
@@ -703,10 +1042,9 @@ public final class MainActivity extends Activity {
                 Ui.load(this);
                 recreate();
             }).show();
-        }), 12);
-
+        });
         String ic = app.prefs().getString("icon", "original");
-        Ui.add(l, Ui.item(this, "App icon", "pc".equals(ic) ? "Same as on the PC (now: " + Icons.name(Icons.current(this)) + ")" : Icons.name(ic), v -> {
+        Ui.pickRow(g, "App icon", "pc".equals(ic) ? "Same as the PC" : Icons.name(ic), v -> {
             String[] names = new String[Icons.ALL.length + 1];
             names[0] = "Same as on the PC";
             for (int i = 0; i < Icons.ALL.length; i++) names[i + 1] = Icons.ALL[i][1];
@@ -717,50 +1055,84 @@ public final class MainActivity extends Activity {
                 else { Icons.apply(this, id); Ui.toast(this, "The launcher shows the new icon in a moment. A shortcut on the home screen may need adding again."); }
                 show();
             }).show();
-        }), 12);
+        });
+        Ui.switchRow(g, "Coloured words", "Unknown, looked-up and card words coloured in videos and books, as on the PC", app.prefs().getBoolean("colours", true),
+                (b, on) -> app.prefs().edit().putBoolean("colours", on).apply());
+        Ui.add(l, g, 0);
 
-        l.addView(Ui.title(this, "Dictionaries"));
-        l.addView(Ui.hint(this, "Import the same wty zip files the PC uses (wty-it-it.zip, and the -ipa one for pronunciation). It takes a minute or two; the dictionary then works offline."));
+        // ---- watching and reading
+        l.addView(Ui.section(this, "Watching and reading"));
+        g = Ui.group(this);
+        Ui.pickRow(g, "Stopwatch: stops after", idleName(app.prefs().getInt("sw_idle_watch", 20)) + " (video)", v -> idlePick("sw_idle_watch"));
+        Ui.pickRow(g, "Stopwatch: stops after", idleName(app.prefs().getInt("sw_idle_read", 90)) + " (book)", v -> idlePick("sw_idle_read"));
+        Ui.switchRow(g, "Primed listening", "Each line: its translation first (paused), then you hear it without text, then the text shows", app.prefs().getBoolean("prime", false),
+                (b, on) -> app.prefs().edit().putBoolean("prime", on).apply());
+        Ui.switchRow(g, "Primed listening: only lines with an unknown word", "The other lines just play", "unk".equals(app.prefs().getString("prime_when", "all")),
+                (b, on) -> app.prefs().edit().putString("prime_when", on ? "unk" : "all").apply());
+        Ui.pickRow(g, "Repeat a line", app.prefs().getInt("loop_times", 1) == 0 ? "until you go on" : app.prefs().getInt("loop_times", 1) + "×", v -> {
+            int[] n = {1, 2, 3, 5, 0};
+            String[] names = {"once", "2 times", "3 times", "5 times", "until you go on"};
+            Ui.dialog(this).setTitle("↺ plays the line").setItems(names, (d, i) -> { app.prefs().edit().putInt("loop_times", n[i]).apply(); show(); }).show();
+        });
+        Ui.add(l, g, 0);
+        l.addView(Ui.hint(this, "The stopwatch counts while a video plays (or is paused for a moment) and while you read. Its time goes to the PC at each sync and shows in Home → This week there."));
+
+        // ---- dictionaries
+        l.addView(Ui.section(this, "Dictionaries"));
+        g = Ui.group(this);
         for (Dict d : app.dicts.list()) {
-            Ui.add(l, Ui.item(this, d.title + " [" + d.lang + "]", d.summary(), v ->
-                    Ui.dialog(this).setTitle(d.title).setItems(new String[]{"Delete this dictionary"}, (dl, i) -> { app.dicts.remove(d); show(); }).show()), 6);
+            Ui.srow(g, d.title + " [" + d.lang + "]", d.summary(), null, v ->
+                    Ui.dialog(this).setTitle(d.title).setItems(new String[]{"Delete this dictionary"}, (dl, i) -> { app.dicts.remove(d); show(); }).show());
         }
-        l.addView(Ui.hint(this, "Frequency lists (for example the Leipzig lists) can be imported the same way: the rank shows in the word popup and goes on the card. A list without a language is made for the language that is selected now."));
-        Ui.add(l, Ui.primary(this, "Import a dictionary (.zip)", v -> pick(REQ_DICT, new String[]{"application/zip", "application/x-zip-compressed", "application/octet-stream"}, false)), 12);
+        LinearLayout imp = Ui.col(this);
+        imp.setPadding(0, Ui.dp(this, 12), 0, Ui.dp(this, 12));
+        imp.addView(Ui.hint(this, "The same wty zip files the PC uses (wty-it-it.zip, and the -ipa one for pronunciation), or a frequency list (Leipzig). A minute or two; then it works offline."));
+        imp.addView(Ui.primary(this, "Import a dictionary (.zip)", v -> pick(REQ_DICT, new String[]{"application/zip", "application/x-zip-compressed", "application/octet-stream"}, false)));
+        if (g.getChildCount() > 0) { View line = new View(this); line.setBackgroundColor(Ui.LINE); g.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)); }
+        g.addView(imp);
+        Ui.add(l, g, 0);
 
-        l.addView(Ui.title(this, "Cards"));
+        // ---- cards
+        l.addView(Ui.section(this, "Cards"));
+        g = Ui.group(this);
         boolean anki = Cards.useAnki();
-        l.addView(Ui.hint(this, anki ? "Cards are made on the phone and added to AnkiDroid at once." : "Cards are kept and made by the PC at the next sync."));
-        LinearLayout cr = Ui.row(this);
-        cr.addView(Ui.weight(Ui.button(this, anki ? "Make them on the PC instead" : "Make them in AnkiDroid", v -> {
-            app.prefs().edit().putString("card_mode", anki ? "pc" : "anki").apply();
+        Ui.switchRow(g, "Make cards in AnkiDroid", anki ? "Cards go into AnkiDroid at once" : "Off: cards wait and the PC makes them at the next sync", anki, (b, on) -> {
+            app.prefs().edit().putString("card_mode", on ? "anki" : "pc").apply();
             show();
-        }), 1));
-        cr.addView(Ui.weight(Ui.button(this, "AnkiDroid fields…", v -> Cards.setup(this, app.lang(), this::show)), 1));
-        Ui.add(l, cr, 8);
-        android.widget.CheckBox cp = new android.widget.CheckBox(this);
-        cp.setText("Copy videos into the app (uses more storage)");
-        cp.setTextColor(Ui.TEXT);
-        cp.setChecked(app.prefs().getBoolean("copy_videos", false));
-        cp.setOnCheckedChangeListener((b, on) -> app.prefs().edit().putBoolean("copy_videos", on).apply());
-        Ui.add(l, cp, 6);
-        l.addView(Ui.hint(this, "By default a video you add stays where it is on the phone and the app only remembers the place (no second copy). Subtitles are copied (they are tiny). Videos from the PC are copied."));
-        l.addView(Ui.hint(this, "Sound and picture of a video line are cut on the phone from the video file (MP4 / MKV). Sound in AAC, Opus or Vorbis is cut as it is; MP3, FLAC and similar are decoded (a small .wav). If the phone has no decoder for it (for example AC-3), the card is left to the PC."));
+        });
+        Ui.pickRow(g, "AnkiDroid fields", "Set up", v -> Cards.setup(this, app.lang(), this::show));
+        Ui.switchRow(g, "Copy videos into the app", "Off: a video stays where it is and the app remembers the place (no second copy)", app.prefs().getBoolean("copy_videos", false),
+                (b, on) -> app.prefs().edit().putBoolean("copy_videos", on).apply());
+        Ui.add(l, g, 0);
+        l.addView(Ui.hint(this, "Sound and picture of a video line are cut on the phone (MP4 / MKV). AAC, Opus and Vorbis are cut as they are; MP3, FLAC and similar become a small .wav. With no decoder (AC-3, often) the card is left to the PC."));
 
-        l.addView(Ui.title(this, "Updates"));
-        l.addView(Ui.hint(this, "This is version " + Updater.myName(app) + ". New versions are built on GitHub; “Check for a new version” downloads the newest one and installs it over this one (your words, books and dictionaries stay)."));
+        // ---- updates, problems
+        l.addView(Ui.section(this, "This app"));
+        g = Ui.group(this);
+        Ui.srow(g, "Version " + Updater.myName(app), "New versions are built on GitHub and install over this one (words, books and dictionaries stay)", Ui.small(this, "Check", v -> checkUpdate(true)), null);
         if (Updater.repo(app).isEmpty() || !app.getString(R.string.update_repo).trim().matches("[\\w.-]+/[\\w.-]+")) {
+            LinearLayout rr = Ui.col(this);
+            rr.setPadding(0, Ui.dp(this, 10), 0, Ui.dp(this, 12));
             android.widget.EditText rp = Ui.input(this, app.prefs().getString("update_repo", ""), "yourname/glossa");
-            Ui.add(l, rp, 6);
-            Ui.add(l, Ui.button(this, "Save the GitHub project", v -> { app.prefs().edit().putString("update_repo", rp.getText().toString().trim()).apply(); show(); }), 6);
+            Ui.add(rr, rp, 6);
+            rr.addView(Ui.button(this, "Save the GitHub project", v -> { app.prefs().edit().putString("update_repo", rp.getText().toString().trim()).apply(); show(); }));
+            View line = new View(this); line.setBackgroundColor(Ui.LINE); g.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+            g.addView(rr);
         }
-        Ui.add(l, Ui.primary(this, "Check for a new version", v -> checkUpdate(true)), 12);
-
-        l.addView(Ui.title(this, "Problem report"));
         File last = new File(getFilesDir(), "crash-seen.txt");
-        l.addView(Ui.hint(this, last.isFile() ? "The last time something went wrong, the app saved what happened. Copy it and send it to get it fixed." : "Nothing has gone wrong so far."));
-        if (last.isFile()) Ui.add(l, Ui.button(this, "Show the report", v -> problemReport("Problem report", last)), 8);
+        Ui.srow(g, "Problem report", last.isFile() ? "Something went wrong last time: copy the report and send it" : "Nothing has gone wrong so far",
+                last.isFile() ? Ui.small(this, "Show", v -> problemReport("Problem report", last)) : null, null);
+        Ui.add(l, g, 0);
         return Ui.scroll(this, l);
+    }
+
+    static String idleName(int s) { return s <= 0 ? "never" : s < 60 ? s + " s" : (s / 60) + " min"; }
+
+    private void idlePick(String key) {
+        int[] n = {10, 20, 30, 60, 90, 180, 300, 0};
+        String[] names = new String[n.length];
+        for (int i = 0; i < n.length; i++) names[i] = n[i] == 0 ? "never (counts while open)" : "after " + idleName(n[i]) + " with nothing happening";
+        Ui.dialog(this).setTitle("The stopwatch stops").setItems(names, (d, i) -> { app.prefs().edit().putInt(key, n[i]).apply(); show(); }).show();
     }
 
     // ================================================================ updates
@@ -818,6 +1190,64 @@ public final class MainActivity extends Activity {
         if (req == REQ_BOOK) addBook(uris.get(0));
         else if (req == REQ_VIDEO) addVideos(uris);
         else if (req == REQ_DICT) importDict(uris.get(0));
+        else if (req == REQ_PHOTO) photoBook(uris);
+    }
+
+    /** Pictures of book pages: sent to the PC (tesseract reads the text), the new book is then copied here. */
+    private void photoBook(List<Uri> uris) {
+        PcLink pc = app.pc();
+        if (pc == null) return;
+        String lang = app.lang();
+        Ui.toast(this, "Sending " + uris.size() + " picture(s) to the PC to be read…");
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        app.bg(() -> {
+            try {
+                List<Object> images = new ArrayList<>();
+                for (Uri u : uris.subList(0, Math.min(10, uris.size()))) images.add(jpegDataUrl(u));
+                Map<String, Object> body = new java.util.LinkedHashMap<>();
+                body.put("lang", lang); body.put("images", images);
+                Map<String, Object> r = pc.post("/api/reader/photo", body, 300000);
+                String key = Json.str(r.get("key"), "");
+                if (key.isEmpty()) throw new IOException("The PC could not read the text from the picture");
+                Book bk = null;
+                for (int tries = 0; tries < 45 && bk == null; tries++) {           // the PC builds the book from the text: a few seconds
+                    try { bk = Book.fromJson(pc.get("/api/pocket/book?key=" + key, 60000)); }
+                    catch (IOException e) { if (tries == 44) throw e; try { Thread.sleep(2000); } catch (InterruptedException ie) { return; } }
+                }
+                bk.id = "pc" + key;
+                if (bk.lang.isEmpty()) bk.lang = lang;
+                bk.write(new File(app.dir("books"), bk.id + ".json"));
+                Book done = bk;
+                app.post(() -> { getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.toast(this, "“" + done.title + "” is in your books"); show(); });
+            } catch (IOException | RuntimeException e) {
+                app.post(() -> { getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.alert(this, "Could not read the page", e instanceof IOException ? explain((IOException) e) : String.valueOf(e)); });
+            }
+        });
+    }
+
+    /** A picture as a JPEG data URL, at most 2600 px on the long side (the text stays readable, the upload stays small). */
+    private String jpegDataUrl(Uri u) throws IOException {
+        android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        try (InputStream in = getContentResolver().openInputStream(u)) { android.graphics.BitmapFactory.decodeStream(in, null, o); }
+        int big = Math.max(o.outWidth, o.outHeight), k = 1;
+        while (big / (k * 2) >= 2600) k *= 2;
+        o = new android.graphics.BitmapFactory.Options();
+        o.inSampleSize = k;
+        android.graphics.Bitmap b;
+        try (InputStream in = getContentResolver().openInputStream(u)) { b = android.graphics.BitmapFactory.decodeStream(in, null, o); }
+        if (b == null) throw new IOException("That is not a picture");
+        try {
+            int rot = 0;
+            try (InputStream in = getContentResolver().openInputStream(u)) {
+                int ori = new android.media.ExifInterface(in).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, 1);
+                rot = ori == 6 ? 90 : ori == 3 ? 180 : ori == 8 ? 270 : 0;
+            } catch (IOException | RuntimeException ignored) { }
+            if (rot != 0) { android.graphics.Matrix m = new android.graphics.Matrix(); m.postRotate(rot); b = android.graphics.Bitmap.createBitmap(b, 0, 0, b.getWidth(), b.getHeight(), m, true); }
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            b.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, bo);
+            return "data:image/jpeg;base64," + android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP);
+        } finally { b.recycle(); }
     }
 
     private String nameOf(Uri u) {

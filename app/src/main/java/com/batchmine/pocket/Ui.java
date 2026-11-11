@@ -179,9 +179,9 @@ public final class Ui {
     }
 
     public static TextView title(Context c, CharSequence s) {
-        TextView t = text(c, s, 20, TEXT);
+        TextView t = text(c, s, 19, TEXT);
         t.setTypeface(Typeface.DEFAULT_BOLD);
-        t.setPadding(0, dp(c, 8), 0, dp(c, 8));
+        t.setPadding(0, dp(c, 14), 0, dp(c, 8));
         return t;
     }
 
@@ -198,43 +198,183 @@ public final class Ui {
         return g;
     }
 
+    // ---------------------------------------------------------------- the PC's shapes (mine_gui.css: --radius 12px, --radius-s 8px)
+    public static final int R = 12, RS = 8;
+
+    /** A shape with a pressed state: COLOR, a little darker / lighter while the finger is on it (like :hover on the PC). */
+    public static android.graphics.drawable.StateListDrawable press(int color, int border, float radius) {
+        android.graphics.drawable.StateListDrawable st = new android.graphics.drawable.StateListDrawable();
+        GradientDrawable on = round(mix(color, TEXT, 0.10f), radius), off = round(color, radius);
+        if (border != 0) { on.setStroke(1, border); off.setStroke(1, border); }
+        st.addState(new int[]{android.R.attr.state_pressed}, on);
+        st.addState(new int[]{}, off);
+        return st;
+    }
+
+    /** A button like the PC's .btn: a soft fill of the text colour, 8 dp corners, medium weight. */
     public static Button button(Context c, CharSequence s, View.OnClickListener l) {
         Button b = new Button(c);
         b.setText(s);
         b.setAllCaps(false);
         b.setTextColor(TEXT);
         b.setTextSize(15);
-        b.setBackground(round(CARD2, dp(c, 12)));
-        b.setPadding(dp(c, 14), dp(c, 6), dp(c, 14), dp(c, 6));
-        b.setMinHeight(dp(c, 44));
+        b.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        b.setBackground(press(mix(BG, TEXT, 0.08f), 0, dp(c, RS)));
+        b.setStateListAnimator(null);
+        b.setPadding(dp(c, 14), dp(c, 4), dp(c, 14), dp(c, 4));
+        b.setMinHeight(dp(c, 42));
+        b.setMinimumHeight(dp(c, 42));
         b.setOnClickListener(l);
         return b;
     }
 
+    /** The PC's .btn.suggested: the accent colour, bold. */
     public static Button primary(Context c, CharSequence s, View.OnClickListener l) {
         Button b = button(c, s, l);
-        b.setBackground(round(ACCENT, dp(c, 12)));
+        b.setBackground(press(ACCENT, 0, dp(c, RS)));
         b.setTextColor(ON_ACC);
         b.setTypeface(Typeface.DEFAULT_BOLD);
         return b;
     }
 
+    /** The PC's .btn.flat: no fill until pressed. */
+    public static Button flat(Context c, CharSequence s, View.OnClickListener l) {
+        Button b = button(c, s, l);
+        b.setBackground(press(0x00000000, 0, dp(c, RS)));
+        return b;
+    }
+
+    /** A small button (.btn.small). */
+    public static Button small(Context c, CharSequence s, View.OnClickListener l) {
+        Button b = button(c, s, l);
+        b.setTextSize(13);
+        b.setMinHeight(dp(c, 34)); b.setMinimumHeight(dp(c, 34));
+        b.setMinWidth(0); b.setMinimumWidth(0);
+        b.setPadding(dp(c, 10), 0, dp(c, 10), 0);
+        return b;
+    }
+
+    /** A card like the PC's .card / .lv: the card colour, a 1 px border, 12 dp corners. */
+    public static GradientDrawable cardBg(Context c) {
+        GradientDrawable g = round(CARD, dp(c, R));
+        g.setStroke(Math.max(1, dp(c, 1) / 2 + 1), LINE);
+        return g;
+    }
+
+    public static LinearLayout card(Context c) {
+        LinearLayout v = col(c);
+        v.setBackground(cardBg(c));
+        v.setPadding(dp(c, 14), dp(c, 12), dp(c, 14), dp(c, 12));
+        return v;
+    }
+
     /** A tappable row: a title with a line of detail under it. */
     public static LinearLayout item(Context c, CharSequence head, CharSequence sub, View.OnClickListener l) {
         LinearLayout v = col(c);
-        v.setPadding(dp(c, 14), dp(c, 11), dp(c, 14), dp(c, 11));
-        v.setBackground(round(CARD, dp(c, 14)));
+        v.setPadding(dp(c, 14), dp(c, 12), dp(c, 14), dp(c, 12));
+        if (l != null) { android.graphics.drawable.StateListDrawable st = press(CARD, LINE, dp(c, R)); v.setBackground(st); }
+        else v.setBackground(cardBg(c));
         TextView h = text(c, head, 16, TEXT);
+        h.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         v.addView(h);
-        if (sub != null && sub.length() > 0) v.addView(text(c, sub, 13, DIM));
+        if (sub != null && sub.length() > 0) { TextView t = text(c, sub, 13, DIM); t.setPadding(0, dp(c, 2), 0, 0); v.addView(t); }
         if (l != null) { v.setOnClickListener(l); v.setClickable(true); }
         return v;
+    }
+
+    /** A small label on a rounded fill (.pill). */
+    public static TextView pill(Context c, CharSequence s, int fg, int bg) {
+        TextView t = text(c, s, 12, fg);
+        t.setBackground(round(bg, dp(c, 99)));
+        t.setPadding(dp(c, 8), dp(c, 1), dp(c, 8), dp(c, 2));
+        return t;
+    }
+
+    /** A section heading above a group of settings rows: small, bold, dim (the PC's settings group names). */
+    public static TextView section(Context c, CharSequence s) {
+        TextView t = text(c, s.toString().toUpperCase(java.util.Locale.ROOT), 12, DIM);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setLetterSpacing(0.08f);
+        t.setPadding(dp(c, 4), dp(c, 18), 0, dp(c, 6));
+        return t;
+    }
+
+    /** A group of settings rows in one card, with lines between them (.srow inside a card on the PC). */
+    public static LinearLayout group(Context c) {
+        LinearLayout v = col(c);
+        v.setBackground(cardBg(c));
+        v.setPadding(dp(c, 14), 0, dp(c, 14), 0);
+        return v;
+    }
+
+    /** One settings row: a bold name and a dim line under it on the left, the control on the right; a tap on the row runs TAP. */
+    public static LinearLayout srow(LinearLayout group, CharSequence name, CharSequence hint, View control, View.OnClickListener tap) {
+        Context c = group.getContext();
+        if (group.getChildCount() > 0) {
+            View line = new View(c);
+            line.setBackgroundColor(LINE);
+            group.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        }
+        LinearLayout r = row(c);
+        r.setPadding(0, dp(c, 11), 0, dp(c, 11));
+        r.setMinimumHeight(dp(c, 52));
+        LinearLayout tx = col(c);
+        TextView n = text(c, name, 15, TEXT);
+        n.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        tx.addView(n);
+        if (hint != null && hint.length() > 0) { TextView h = text(c, hint, 12.5f, DIM); h.setPadding(0, dp(c, 2), 0, 0); tx.addView(h); }
+        r.addView(tx, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (control != null) {
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            p.leftMargin = dp(c, 12);
+            r.addView(control, p);
+        }
+        if (tap != null) { r.setOnClickListener(tap); r.setBackground(press(0x00000000, 0, dp(c, RS))); }
+        group.addView(r);
+        return r;
+    }
+
+    /** A settings row whose control is a value and a chevron (opens a choice). */
+    public static LinearLayout pickRow(LinearLayout group, CharSequence name, CharSequence value, View.OnClickListener tap) {
+        TextView v = text(group.getContext(), value + "  ›", 14, DIM);
+        v.setMaxWidth(dp(group.getContext(), 170));
+        v.setGravity(Gravity.END);
+        return srow(group, name, null, v, tap);
+    }
+
+    /** A switch like the PC's .switch (accent track when on); the row toggles it too. */
+    public static android.widget.Switch toggle(Context c, boolean on, android.widget.CompoundButton.OnCheckedChangeListener l) {
+        android.widget.Switch s = new android.widget.Switch(c);
+        s.setChecked(on);
+        int[][] st = {{android.R.attr.state_checked}, {}};
+        s.setThumbTintList(new android.content.res.ColorStateList(st, new int[]{0xFFFFFFFF, 0xFFFFFFFF}));
+        s.setTrackTintList(new android.content.res.ColorStateList(st, new int[]{ACCENT, mix(BG, TEXT, 0.35f)}));
+        s.setTrackTintMode(android.graphics.PorterDuff.Mode.SRC);
+        s.setOnCheckedChangeListener(l);
+        return s;
+    }
+
+    public static LinearLayout switchRow(LinearLayout group, CharSequence name, CharSequence hint, boolean on, android.widget.CompoundButton.OnCheckedChangeListener l) {
+        android.widget.Switch sw = toggle(group.getContext(), on, l);
+        return srow(group, name, hint, sw, v -> sw.toggle());
+    }
+
+    /** A row of buttons that share the width (gap 8 dp). */
+    public static LinearLayout buttons(Context c, View... bs) {
+        LinearLayout r = row(c);
+        for (int i = 0; i < bs.length; i++) {
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            if (i > 0) p.leftMargin = dp(c, 8);
+            r.addView(bs[i], p);
+        }
+        return r;
     }
 
     /** A thin bar showing how far along something is (0..1). */
     public static View progress(Context c, float f) {
         android.widget.FrameLayout fr = new android.widget.FrameLayout(c);
         fr.setBackground(round(mix(CARD, TEXT, 0.12f), dp(c, 2)));
+        fr.setClipToOutline(true);
         View in = new View(c);
         in.setBackground(round(ACCENT, dp(c, 2)));
         fr.addView(in, new android.widget.FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -268,7 +408,7 @@ public final class Ui {
 
     public static View weight(View v, float w) {
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, w);
-        p.rightMargin = 6;
+        p.rightMargin = dp(v.getContext(), 8);
         v.setLayoutParams(p);
         return v;
     }
@@ -288,8 +428,10 @@ public final class Ui {
         e.setHintTextColor(DIM);
         e.setSingleLine(true);
         e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        e.setBackground(round(CARD2, dp(c, 10)));
-        e.setPadding(dp(c, 10), dp(c, 8), dp(c, 10), dp(c, 8));
+        GradientDrawable g = round(mix(BG, TEXT, 0.05f), dp(c, RS));
+        g.setStroke(1, mix(BG, TEXT, 0.18f));
+        e.setBackground(g);
+        e.setPadding(dp(c, 12), dp(c, 10), dp(c, 12), dp(c, 10));
         return e;
     }
 
