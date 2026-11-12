@@ -35,6 +35,16 @@ final class Marks {
         save(video, m);
     }
 
+    static synchronized boolean hasLine(String video, double start) { return load(video).containsKey(Math.round(start * 10)); }
+
+    /** A line taken from the PC (no toggling): kept when the phone has it already. */
+    static synchronized void put(String video, double start, boolean marked, String text) {
+        if (text == null || text.trim().isEmpty()) return;
+        TreeMap<Long, Line> m = load(video);
+        m.put(Math.round(start * 10), new Line(start, marked ? "m" : "h", text.replace('\n', ' ').replace('\t', ' ').trim()));
+        save(video, m);
+    }
+
     static synchronized boolean isMarked(String video, double start) {
         Line l = load(video).get(Math.round(start * 10));
         return l != null && l.marked();

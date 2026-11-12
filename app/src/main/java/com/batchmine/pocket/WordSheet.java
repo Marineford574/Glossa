@@ -94,6 +94,10 @@ public final class WordSheet {
         Button say = Ui.button(a, "🔊", v -> Speak.say(a, lang, wIn.getText().toString().trim()));
         say.setMinWidth(0);
         top.addView(say);
+        Button close = Ui.flat(a, "✕", v -> d.dismiss());
+        close.setMinWidth(0);
+        close.setContentDescription("Close");
+        top.addView(close);
         box.addView(top);
         LinearLayout meta = Ui.row(a);
         meta.setPadding(0, Ui.dp(a, 6), 0, 0);
@@ -189,10 +193,39 @@ public final class WordSheet {
         box.addView(defBox);
         final WebView webF = web;
         final TextView plainF = plain;
+        android.widget.HorizontalScrollView sitesScroll = new android.widget.HorizontalScrollView(a);
+        sitesScroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout sites = Ui.row(a);
+        sites.setPadding(0, Ui.dp(a, 8), 0, 0);
+        sitesScroll.addView(sites);
+        Runnable drawSites = () -> {
+            sites.removeAllViews();
+            TextView lbl = Ui.text(a, "Look up on", 12, Ui.DIM);
+            lbl.setPadding(0, 0, Ui.dp(a, 8), 0);
+            sites.addView(lbl);
+            String w = wIn.getText().toString().trim();
+            if (w.isEmpty()) return;
+            for (String[] site : com.batchmine.pocket.core.Sites.urls(lang, w)) {
+                TextView chip = Ui.pill(a, site[0], Ui.ACCENT, Ui.CARD2);
+                chip.setPadding(Ui.dp(a, 10), Ui.dp(a, 4), Ui.dp(a, 10), Ui.dp(a, 4));
+                chip.setTextSize(13);
+                chip.setOnClickListener(v -> { try { a.startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(site[1]))); } catch (RuntimeException e) { Ui.toast(a, "No browser to open it"); } });
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.rightMargin = Ui.dp(a, 6);
+                sites.addView(chip, lp);
+            }
+        };
+        drawSites.run();
+        wIn.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence x, int y, int z, int q) { }
+            @Override public void onTextChanged(CharSequence x, int y, int z, int q) { }
+            @Override public void afterTextChanged(android.text.Editable e) { drawSites.run(); }
+        });
+        box.addView(sitesScroll);
         LinearLayout btns = Ui.row(a);
         btns.setPadding(0, Ui.dp(a, 10), 0, 0);
         WordStore ws = app.store(lang);
-        Button known = Ui.button(a, "Known", null), save = Ui.button(a, "Save", null), card = Ui.primary(a, "Make card", null);
+        Button known = Ui.button(a, "Add to known", null), save = Ui.button(a, "Save", null), card = Ui.primary(a, "Make card", null);
         btns.addView(Ui.weight(known, 1));
         btns.addView(Ui.weight(save, 1));
         btns.addView(Ui.weight(card, 1.3f));
@@ -208,7 +241,7 @@ public final class WordSheet {
         Runnable refreshKnown = () -> {
             String key = res[0] == null ? word[0].toLowerCase() : res[0].lemma().toLowerCase();
             boolean k = ws.isKnown(key) || ws.isKnown(word[0].toLowerCase());
-            known.setText(k ? "Not known" : "Known");
+            known.setText(k ? "Not known" : "Add to known");
         };
         known.setOnClickListener(v -> {
             String lemma = res[0] == null ? word[0] : res[0].lemma();

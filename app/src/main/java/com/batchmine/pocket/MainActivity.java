@@ -270,6 +270,23 @@ public final class MainActivity extends Activity {
                     long t = sp.getLong("rt_" + id, 0);
                     if (t > 0) bp.put(id.substring(2), new ArrayList<Object>(Arrays.asList((double) sp.getFloat("rf_" + id, 0), (double) t)));
                 }
+                Map<String, Object> ex = new java.util.LinkedHashMap<>(), mk = new java.util.LinkedHashMap<>(), bt = new java.util.LinkedHashMap<>();
+                List<Object> done = new ArrayList<>();
+                if (vs != null) for (File f : vs) {
+                    String nm = Player.videoName(f).toLowerCase(Locale.ROOT);
+                    if (sp.getBoolean("vdone_" + f.getName(), false)) done.add(nm);
+                    List<Object> rows = new ArrayList<>();
+                    for (Marks.Line ln : Marks.list(f.getName())) rows.add(new ArrayList<Object>(Arrays.asList(ln.start, ln.kind, ln.text)));
+                    if (!rows.isEmpty()) mk.put(nm, rows);
+                }
+                if (bs != null) for (File f : bs) {
+                    String id = f.getName().replaceAll("\\.json$", ""), own = sp.getString("btitle_" + id, "");
+                    if (!own.isEmpty()) bt.put(id.substring(2), own);
+                }
+                ex.put("video_done", done);
+                ex.put("marks", mk);
+                ex.put("book_titles", bt);
+                out.put("extra", ex);
                 out.put("stopwatch", Stopwatch.forSync(14));
                 out.put("video_pos", vp);
                 out.put("book_pos", bp);
@@ -301,6 +318,40 @@ public final class MainActivity extends Activity {
                         ed.putInt("rc_" + id, c).putInt("rp_" + id, Math.max(0, Math.min(target, Math.max(0, bk.chapters.get(c).paras.size() - 1))))
                                 .putFloat("rf_" + id, (float) Json.num(v.get(0), 0)).putLong("rt_" + id, t);
                     } catch (IOException | RuntimeException ignored) { }
+                }
+                Map<String, Object> ex = Json.obj(pulled.get("extra"));
+                Map<String, Object> hm = Json.obj(ex.get("home"));
+                if (!hm.isEmpty()) {
+                    Map<String, Object> gl = Json.obj(hm.get("goal"));
+                    StringBuilder tw = new StringBuilder();
+                    for (Object o : Json.arr(hm.get("trouble"))) { List<Object> r = Json.arr(o); if (r.size() >= 3) tw.append(r.get(0)).append('\t').append((int) Json.num(r.get(1), 0)).append('\n'); }
+                    ed.putInt("pc_goal_cards", (int) Json.num(gl.get("cards"), 10)).putInt("pc_goal_min", (int) Json.num(gl.get("minutes"), 30))
+                      .putInt("pc_cards_today", (int) Json.num(hm.get("cards_today"), 0)).putInt("pc_min_today", (int) Json.num(hm.get("minutes_today"), 0))
+                      .putInt("pc_streak", (int) Json.num(hm.get("streak"), 0)).putString("pc_trouble", tw.toString())
+                      .putString("pc_home_day", Stopwatch.day(System.currentTimeMillis()));
+                }
+                File[] mine = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+                if (mine != null) {
+                    java.util.Set<String> pcDone = new java.util.HashSet<>();
+                    for (Object o : Json.arr(ex.get("video_done"))) pcDone.add(String.valueOf(o).toLowerCase(Locale.ROOT));
+                    Map<String, Object> pcLang = Json.obj(ex.get("video_lang")), pcMarks = Json.obj(ex.get("marks"));
+                    for (File f : mine) {
+                        String nm = Player.videoName(f).toLowerCase(Locale.ROOT);
+                        if (pcDone.contains(nm) && !sp.getBoolean("vdone_" + f.getName(), false)) ed.putBoolean("vdone_" + f.getName(), true).putLong("vpost_" + f.getName(), Math.max(1, sp.getLong("vpost_" + f.getName(), 1)));
+                        String lg = Json.str(pcLang.get(nm), "");
+                        if (!lg.isEmpty() && sp.getString("vlang_" + f.getName(), "").isEmpty()) ed.putString("vlang_" + f.getName(), lg);
+                        for (Object r : Json.arr(pcMarks.get(nm))) {
+                            List<Object> row = Json.arr(r);
+                            if (row.size() < 3) continue;
+                            double st = Json.num(row.get(0), 0);
+                            if (Marks.hasLine(f.getName(), st)) continue;
+                            Marks.put(f.getName(), st, "m".equals(String.valueOf(row.get(1))), String.valueOf(row.get(2)));
+                        }
+                    }
+                }
+                for (Map.Entry<String, Object> e : Json.obj(ex.get("book_titles")).entrySet()) {
+                    String id = "pc" + e.getKey();
+                    if (sp.getString("btitle_" + id, "").isEmpty() && new File(app.dir("books"), id + ".json").isFile()) ed.putString("btitle_" + id, String.valueOf(e.getValue()));
                 }
                 ed.apply();
             }
@@ -343,8 +394,10 @@ public final class MainActivity extends Activity {
             Ui.add(l, Ui.item(this, "Link the PC", "Paste the link from Glossa on the PC (Settings → Phone access) to exchange words, cards and where you stopped.", v -> { toSettings(); }), 14);
         }
 
+        todayBox(l);
         weekBox(l);
         reviewBox(l);
+        troubleBox(l);
 
         // continue: the videos and books touched last, newest first
         List<Object[]> recent = new ArrayList<>();          // {time, view}
@@ -397,6 +450,96 @@ public final class MainActivity extends Activity {
     }
 
     /** The time of the last 7 days (watching and reading on this phone), like the PC's week chart. */
+    /** A ring that fills towards a goal, with the number inside (the PC's Home rings). */
+    private View ring(int val, int goal, String label) {
+        LinearLayout box = Ui.col(this);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        final float f = goal > 0 ? Math.min(1f, val / (float) goal) : 0f;
+        final boolean done = goal > 0 && val >= goal;
+        View v = new View(this) {
+            final android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+            @Override protected void onDraw(android.graphics.Canvas c) {
+                float w = Ui.dp(MainActivity.this, 7), s = Math.min(getWidth(), getHeight()) - w;
+                android.graphics.RectF r = new android.graphics.RectF(w / 2, w / 2, w / 2 + s, w / 2 + s);
+                p.setStyle(android.graphics.Paint.Style.STROKE); p.setStrokeWidth(w); p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+                p.setColor(Ui.mix(Ui.CARD, Ui.TEXT, 0.14f)); c.drawArc(r, 0, 360, false, p);
+                if (f > 0) { p.setColor(done ? 0xFF3FB950 : Ui.ACCENT); c.drawArc(r, -90, 360 * f, false, p); }
+                p.setStyle(android.graphics.Paint.Style.FILL); p.setStrokeWidth(0); p.setColor(Ui.TEXT); p.setTextAlign(android.graphics.Paint.Align.CENTER);
+                p.setTextSize(Ui.dp(MainActivity.this, 20)); p.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+                c.drawText(String.valueOf(val), getWidth() / 2f, getHeight() / 2f + Ui.dp(MainActivity.this, 2), p);
+                p.setTextSize(Ui.dp(MainActivity.this, 11)); p.setColor(Ui.DIM); p.setTypeface(android.graphics.Typeface.DEFAULT);
+                c.drawText(goal > 0 ? "of " + goal : "", getWidth() / 2f, getHeight() / 2f + Ui.dp(MainActivity.this, 17), p);
+            }
+        };
+        box.addView(v, new LinearLayout.LayoutParams(Ui.dp(this, 88), Ui.dp(this, 88)));
+        TextView t = Ui.text(this, label, 12, Ui.DIM);
+        t.setPadding(0, Ui.dp(this, 4), 0, 0);
+        box.addView(t);
+        return box;
+    }
+
+    /** Today towards the goals set on the PC: cards made (here and there) and minutes watched / read, and the streak. */
+    private void todayBox(LinearLayout l) {
+        android.content.SharedPreferences sp = app.prefs();
+        String today = Stopwatch.day(System.currentTimeMillis());
+        boolean fresh = today.equals(sp.getString("pc_home_day", ""));
+        int goalC = sp.getInt("pc_goal_cards", 0), goalM = sp.getInt("pc_goal_min", 0);
+        if (goalC == 0 && goalM == 0 && !fresh) return;               // never synced with a PC: nothing to measure against
+        int cards = sp.getInt("cards_" + today, 0) + (fresh ? sp.getInt("pc_cards_today", 0) : 0);
+        int mins = Math.round((Stopwatch.seconds(today, "watch") + Stopwatch.seconds(today, "read")) / 60f) + (fresh ? sp.getInt("pc_min_today", 0) : 0);
+        l.addView(Ui.title(this, "Today"));
+        LinearLayout card = Ui.card(this);
+        LinearLayout row = Ui.row(this);
+        row.setGravity(Gravity.CENTER);
+        row.addView(Ui.weight(ring(cards, goalC, "cards made"), 1));
+        row.addView(Ui.weight(ring(mins, goalM, "minutes"), 1));
+        card.addView(row);
+        int streak = sp.getInt("pc_streak", 0);
+        if (streak > 0) {
+            TextView st = Ui.text(this, streak + (streak == 1 ? " day" : " days") + " in a row with a card", 12, Ui.DIM);
+            st.setGravity(Gravity.CENTER);
+            st.setPadding(0, Ui.dp(this, 8), 0, 0);
+            card.addView(st);
+        }
+        Ui.add(l, card, 8);
+    }
+
+    /** Words that keep coming up in the videos you watch and are still unknown (from the PC); tap one for its card. */
+    private void troubleBox(LinearLayout l) {
+        String raw = app.prefs().getString("pc_trouble", "");
+        if (raw.isEmpty()) return;
+        l.addView(Ui.title(this, "Words that keep coming up"));
+        LinearLayout card = Ui.card(this);
+        android.widget.HorizontalScrollView hs = null;
+        LinearLayout wrap = Ui.col(this);
+        LinearLayout cur = null;
+        int width = 0, max = getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 24 + 28);
+        for (String line : raw.split("\n")) {
+            String[] p = line.split("\t");
+            if (p.length < 2 || p[0].isEmpty()) continue;
+            TextView chip = Ui.pill(this, p[0] + "  " + p[1] + "×", Ui.TEXT, Ui.CARD2);
+            chip.setPadding(Ui.dp(this, 10), Ui.dp(this, 5), Ui.dp(this, 10), Ui.dp(this, 5));
+            chip.setTextSize(14);
+            chip.measure(0, 0);
+            int cw = chip.getMeasuredWidth() + Ui.dp(this, 6);
+            if (cur == null || width + cw > max) { cur = Ui.row(this); cur.setPadding(0, 0, 0, Ui.dp(this, 6)); wrap.addView(cur); width = 0; }
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.rightMargin = Ui.dp(this, 6);
+            cur.addView(chip, lp);
+            width += cw;
+            final String word = p[0];
+            chip.setOnClickListener(v -> {
+                Cards.Request r = new Cards.Request();
+                r.lang = app.lang(); r.kind = "text"; r.sentence = ""; r.title = "";
+                WordSheet.show(this, app.lang(), word, r, () -> show());
+            });
+        }
+        card.addView(wrap);
+        TextView h = Ui.text(this, "Unknown words seen in 2 or more videos", 12, Ui.DIM);
+        card.addView(h);
+        Ui.add(l, card, 8);
+    }
+
     private void weekBox(LinearLayout l) {
         int[] w = new int[7], r = new int[7];
         String[] names = new String[7];
@@ -885,6 +1028,64 @@ public final class MainActivity extends Activity {
         return out.toArray(new File[0]);
     }
 
+    /** Subtitles for a video from the internet: the PC does the searching (its sources and keys); the phone keeps the file next to the video. */
+    private void findSubs(File f) {
+        PcLink pc = app.pc();
+        if (pc == null) { Ui.toast(this, "Paste the PC link in Settings first: the PC searches for the phone"); return; }
+        Shows.Ep e = Shows.of(Player.videoName(f));
+        String name = vtitle(f);
+        String lang = vlang(f).isEmpty() ? app.lang() : vlang(f);
+        if (lang.equals("en") && !app.lang().equals("en")) lang = app.lang();
+        final String lg = lang;
+        Ui.toast(this, "Searching for " + lg.toUpperCase(Locale.ROOT) + " subtitles…");
+        app.bg(() -> {
+            try {
+                String q = "/api/pocket/subsearch?lang=" + PcLink.enc(lg) + "&q=" + PcLink.enc(name)
+                        + (e.episode >= 0 ? "&season=" + Math.max(e.season, 0) + "&episode=" + e.episode : "");
+                Map<String, Object> r = pc.get(q, 60000);
+                List<Object> rs = Json.arr(r.get("results"));
+                app.post(() -> {
+                    if (rs.isEmpty()) {
+                        List<Object> notes = Json.arr(r.get("notes"));
+                        Ui.alert(this, "No subtitles found", "Nothing for “" + name + "” in " + lg.toUpperCase(Locale.ROOT) + (notes.isEmpty() ? "." : ".\n\n" + android.text.TextUtils.join("\n", notes))
+                                + (Json.str(r.get("has_key"), "").equals("false") || Boolean.FALSE.equals(r.get("has_key")) ? "\n\nAdd a SubDL or OpenSubtitles key on the PC (Settings) for more sources." : ""));
+                        return;
+                    }
+                    int n = Math.min(40, rs.size());
+                    String[] items = new String[n];
+                    for (int i = 0; i < n; i++) {
+                        Map<String, Object> x = Json.obj(rs.get(i));
+                        items[i] = Json.str(x.get("name"), "?") + (Boolean.TRUE.equals(x.get("full_season")) ? "  · whole season" : "") + "  · " + Json.str(x.get("source"), "");
+                    }
+                    Ui.choose(this, "Subtitles for " + name + (e.episode >= 0 ? " · " + e.label() : ""), items, -1, i -> getSub(f, lg, Json.obj(rs.get(i)), e));
+                });
+            } catch (IOException ex) { app.post(() -> Ui.alert(this, "Could not search", explain(ex))); }
+        });
+    }
+
+    private void getSub(File f, String lang, Map<String, Object> item, Shows.Ep e) {
+        PcLink pc = app.pc();
+        if (pc == null) return;
+        Ui.toast(this, "Downloading…");
+        app.bg(() -> {
+            try {
+                Map<String, Object> body = new java.util.LinkedHashMap<>();
+                body.put("item", item);
+                body.put("lang", lang);
+                if (e.episode >= 0) { body.put("season", e.season); body.put("episode", e.episode); }
+                Map<String, Object> r = pc.post("/api/pocket/subget", body, 90000);
+                String text = Json.str(r.get("text"), ""), ext = Json.str(r.get("ext"), ".srt");
+                String stem = Player.niceName(f);
+                File dest = new File(app.videoDir(), stem + "." + lang + ext);
+                for (int k = 2; dest.exists(); k++) dest = new File(app.videoDir(), stem + "." + lang + k + ext);
+                java.nio.file.Files.write(dest.toPath(), text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                if (vlang(f).isEmpty()) setVideoLang(f, lang);
+                File saved = dest;
+                app.post(() -> { Ui.toast(this, "Saved " + saved.getName()); show(); });
+            } catch (IOException ex) { app.post(() -> Ui.alert(this, "Could not download it", explain(ex))); }
+        });
+    }
+
     private void pickVideoLang(File f) {
         String[] codes = {"it", "de", "hr", "en", "fr", "es", "pt", "nl"};
         Ui.choose(this, "Which language is this video for?", codes, Arrays.asList(codes).indexOf(vlang(f)), i -> { setVideoLang(f, codes[i]); show(); });
@@ -975,9 +1176,10 @@ public final class MainActivity extends Activity {
         String sub = android.text.TextUtils.join(" · ", bits);
         LinearLayout it = Ui.item(this, head, sub, v -> openVideo(f));
         it.setOnLongClickListener(v -> {
-            String[] acts = {done ? "Mark as not watched" : "Mark as watched", linked ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles", "Set language (now: " + (vlang(f).isEmpty() ? "not set" : vlang(f)) + ")"};
+            String[] acts = {done ? "Mark as not watched" : "Mark as watched", linked ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles", "Set language (now: " + (vlang(f).isEmpty() ? "not set" : vlang(f)) + ")", "Find subtitles on the internet (through the PC)"};
             Ui.choose(this, vtitle(f), acts, -1, w -> {
                 if (w == 2) { pickVideoLang(f); return; }
+                if (w == 3) { findSubs(f); return; }
                 if (w == 0) {
                     android.content.SharedPreferences.Editor ed = app.prefs().edit().putBoolean("vdone_" + f.getName(), !done).putLong("vpost_" + f.getName(), System.currentTimeMillis());
                     if (done) ed.putFloat("vpos_" + f.getName(), 0);
@@ -1009,15 +1211,60 @@ public final class MainActivity extends Activity {
                 List<Object> vs = Json.arr(pc.get("/api/pocket/videos?lang=" + PcLink.enc(lang), 30000).get("videos"));
                 app.post(() -> {
                     if (vs.isEmpty()) { Ui.alert(this, "Videos on the PC", "Nothing yet: the PC lists the folders of videos you watched in " + lang.toUpperCase(Locale.ROOT) + "."); return; }
-                    String[] names = new String[vs.size()];
-                    for (int i = 0; i < names.length; i++) {
-                        Map<String, Object> v = Json.obj(vs.get(i));
-                        names[i] = Json.str(v.get("series"), "") + " / " + Json.str(v.get("name"), "?") + "  (" + Ui.size((long) Json.num(v.get("size"), 0)) + ")";
-                    }
-                    Ui.choose(this, "Copy from the PC", names, -1, i -> copyVideo(pc, Json.obj(vs.get(i))));
+                    pcLibrary(pc, vs);
                 });
             } catch (IOException e) { app.post(() -> Ui.alert(this, "Could not reach the PC", explain(e))); }
         });
+    }
+
+    /** The PC's videos as its series (with how many episodes are already on the phone); tap a series for its episodes, tap an episode to copy it. */
+    private void pcLibrary(PcLink pc, List<Object> vs) {
+        Map<String, List<Map<String, Object>>> bySeries = new java.util.LinkedHashMap<>();
+        for (Object o : vs) {
+            Map<String, Object> v = Json.obj(o);
+            String name = Json.str(v.get("name"), "?"), series = Json.str(v.get("series"), "");
+            Shows.Ep e = Shows.of(name);
+            String key = !e.show.isEmpty() ? e.show : (!series.isEmpty() ? Shows.pretty(series) : Shows.pretty(name));
+            bySeries.computeIfAbsent(key, k -> new ArrayList<>()).add(v);
+        }
+        java.util.Set<String> have = new java.util.HashSet<>();
+        File[] mine = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+        if (mine != null) for (File f : mine) have.add(Player.videoName(f).toLowerCase(Locale.ROOT));
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 14));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        for (Map.Entry<String, List<Map<String, Object>>> en : bySeries.entrySet()) {
+            List<Map<String, Object>> eps = en.getValue();
+            int got = 0;
+            for (Map<String, Object> v : eps) if (have.contains(Json.str(v.get("name"), "").toLowerCase(Locale.ROOT))) got++;
+            String sub = eps.size() == 1 ? Shows.of(Json.str(eps.get(0).get("name"), "")).longLabel() : eps.size() + " episodes";
+            if (got > 0) sub += (sub.isEmpty() ? "" : " · ") + got + " on the phone";
+            LinearLayout it = Ui.item(this, en.getKey(), sub, v -> { Ui.dismiss(d[0]); pcEpisodes(pc, en.getKey(), eps, vs); });
+            Ui.add(l, it, 6);
+        }
+        d[0] = Ui.sheet(this, "Videos on the PC (" + app.lang().toUpperCase(Locale.ROOT) + ")", Ui.scroll(this, l), true);
+    }
+
+    private void pcEpisodes(PcLink pc, String series, List<Map<String, Object>> eps, List<Object> all) {
+        eps.sort((a, b) -> Long.compare(Shows.of(Json.str(a.get("name"), "")).order(), Shows.of(Json.str(b.get("name"), "")).order()));
+        java.util.Set<String> have = new java.util.HashSet<>();
+        File[] mine = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+        if (mine != null) for (File f : mine) have.add(Player.videoName(f).toLowerCase(Locale.ROOT));
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 14));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        l.addView(Ui.small(this, "‹ All series", v -> { Ui.dismiss(d[0]); pcLibrary(pc, all); }));
+        for (Map<String, Object> v : eps) {
+            String name = Json.str(v.get("name"), "?");
+            Shows.Ep e = Shows.of(name);
+            boolean there = have.contains(name.toLowerCase(Locale.ROOT));
+            int subs = Json.arr(v.get("subs")).size();
+            String head = e.episode >= 0 ? e.longLabel() : Shows.pretty(name);
+            String sub = Ui.size((long) Json.num(v.get("size"), 0)) + " · " + (subs == 0 ? "no subtitles" : subs + " subtitle file" + (subs > 1 ? "s" : "")) + (there ? " · already on the phone" : "");
+            LinearLayout it = Ui.item(this, (there ? "✓  " : "") + head, sub, x -> { Ui.dismiss(d[0]); copyVideo(pc, v); });
+            Ui.add(l, it, 6);
+        }
+        d[0] = Ui.sheet(this, series, Ui.scroll(this, l), true);
     }
 
     private void copyVideo(PcLink pc, Map<String, Object> v) {

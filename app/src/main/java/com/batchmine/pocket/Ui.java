@@ -447,10 +447,36 @@ public final class Ui {
             @Override public AlertDialog show() {
                 AlertDialog d = create();
                 if (gone(c)) return d;
-                try { d.show(); } catch (RuntimeException ignored) { }       // the screen closed between the check and now
+                try { d.show(); } catch (RuntimeException ignored) { return d; }       // the screen closed between the check and now
+                try { style(d, c); } catch (RuntimeException ignored) { /* the grey one is fine too */ }
                 return d;
             }
         };
+    }
+
+    /** An alert dialog in the app's colours: its card, title, text and buttons (the phone's own grey is only the fallback). */
+    private static void style(AlertDialog d, Context c) {
+        if (d.getWindow() != null) {
+            android.graphics.drawable.GradientDrawable bg = round(BG, dp(c, 18));
+            bg.setStroke(1, LINE);
+            d.getWindow().setBackgroundDrawable(new android.graphics.drawable.InsetDrawable(bg, dp(c, 6)));
+        }
+        int tid = c.getResources().getIdentifier("alertTitle", "id", "android");
+        View t = tid == 0 ? null : d.findViewById(tid);
+        if (t instanceof TextView) { ((TextView) t).setTextColor(TEXT); ((TextView) t).setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL)); }
+        View m = d.findViewById(android.R.id.message);
+        if (m instanceof TextView) ((TextView) m).setTextColor(mix(TEXT, BG, 0.15f));
+        int[] ids = {AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL};
+        for (int k = 0; k < ids.length; k++) {
+            Button b = d.getButton(ids[k]);
+            if (b == null) continue;
+            b.setAllCaps(false);
+            b.setTextColor(k == 0 ? ACCENT : TEXT);
+            b.setBackground(press(0x00000000, 0, dp(c, 99)));
+        }
+        android.widget.ListView lv = d.getListView();
+        if (lv != null) lv.setDivider(new android.graphics.drawable.ColorDrawable(LINE));
+        if (lv != null) lv.setDividerHeight(1);
     }
 
     // ---------------------------------------------------------------- sheets in the app's own colours (not the phone's grey dialogs)

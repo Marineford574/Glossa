@@ -612,7 +612,7 @@ public final class Player extends Activity {
 
     private void subsDialog() {
         List<File> subs = subsOf(file);
-        if (subs.isEmpty()) { Ui.alert(this, "Subtitles", "There is no subtitle file (.srt, .vtt, .ass) with this video. Add the subtitle files with the video (Videos → Add a video, choose both), or copy it from the PC with its subtitles."); return; }
+        if (subs.isEmpty()) { Ui.alert(this, "Subtitles", "There is no subtitle file (.srt, .vtt, .ass) with this video. Add the subtitle files with the video (Videos → Add a video, choose both), copy it from the PC with its subtitles, or long-press the video in the Videos tab → “Find subtitles on the internet”."); return; }
         String[] names = new String[subs.size()];
         for (int i = 0; i < names.length; i++) names[i] = subs.get(i).getName();
         Ui.choose(this, "Subtitles to learn from", names, -1, i -> {

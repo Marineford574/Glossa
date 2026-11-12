@@ -150,6 +150,8 @@ public final class Cards {
             c.put("end", r.end);
         }
         App.get().store(r.lang).addPending(c);
+        String day = Stopwatch.day(System.currentTimeMillis());
+        App.get().prefs().edit().putInt("cards_" + day, App.get().prefs().getInt("cards_" + day, 0) + 1).apply();
         Ui.toast(a, (why == null ? "" : why + ": ") + "the card for “" + r.word + "” waits for the PC (made at the next sync)");
         if (done != null) done.run();
     }

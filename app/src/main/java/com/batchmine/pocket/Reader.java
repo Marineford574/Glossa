@@ -3,11 +3,15 @@ package com.batchmine.pocket;
 import android.app.Activity;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.text.method.LinkMovementMethod;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.BaseAdapter;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
@@ -17,26 +21,45 @@ import com.batchmine.pocket.core.Subs;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
-/** Reading a book: one chapter at a time, words coloured and tappable, position remembered. */
+/**
+ * Reading a book, laid out like the PC's Reader: a bar with the title (tap to rename), the language and the tools (listen, contents,
+ * options); the chapter's text with its words coloured and tappable; under it the book's progress, ‹ Back / Next › and how many words
+ * of this chapter you don't know yet (tap: the word list). Position remembered.
+ */
 public final class Reader extends Activity {
     private App app;
     private Book book;
     private Colourer col;
     private int chapter, firstPara;
     private ListView list;
-    private TextView head;
+    private TextView chapLine, unkText, posText;
+    private FrameLayout bookBar;
+    private View bookFill;
+    private android.widget.Button backBtn, nextBtn;
+    private LinearLayout undoBar;
     private float size = 19;
     private SharedPreferences sp;
+    private TextToSpeech tts;
+    private boolean speaking;
+    private int speakAt = -1;
+    private android.widget.ImageView listenIcon;
+    private final Map<String, Integer> unknown = new LinkedHashMap<>();   // this chapter's unknown words, most frequent first
 
     static int[] position(String id) {
         SharedPreferences p = App.get().prefs();
         return new int[]{p.getInt("rc_" + id, 0), p.getInt("rp_" + id, 0)};
     }
+
+    private String lang() { return book.lang.isEmpty() ? app.lang() : book.lang; }
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -48,39 +71,239 @@ public final class Reader extends Activity {
         } catch (IOException | RuntimeException e) { app.report("Could not open book " + id, e); Ui.toast(this, "Could not open the book"); finish(); return; }
         String own = sp.getString("btitle_" + id, "");
         if (!own.isEmpty()) book.title = own;
-                if (book.chapters.isEmpty()) { Ui.toast(this, "This book has no text"); finish(); return; }
+        if (book.chapters.isEmpty()) { Ui.toast(this, "This book has no text"); finish(); return; }
         col = new Colourer(app.lang().equals(book.lang) || book.lang.isEmpty() ? app.lang() : book.lang);
         col.colours = sp.getBoolean("colours", true);
         size = sp.getFloat("fs", 19);
         chapter = Math.max(0, Math.min(sp.getInt("rc_" + id, 0), book.chapters.size() - 1));
         firstPara = Math.max(0, sp.getInt("rp_" + id, 0));
+        if (sp.getBoolean("rd_awake", false)) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
         LinearLayout root = Ui.col(this);
         Ui.bars(this);
         root.setBackgroundColor(Ui.BG);
-        LinearLayout bar = Ui.row(this);
-        int p = Ui.dp(this, 8);
-        bar.setPadding(p, p, p, p);
-        bar.addView(Ui.button(this, "‹", v -> go(chapter - 1)));
-        head = Ui.text(this, "", 15, Ui.TEXT);
-        head.setGravity(Gravity.CENTER);
-        head.setOnClickListener(v -> contents());
-        bar.addView(Ui.weight(head, 1));
-        bar.addView(Ui.button(this, "›", v -> go(chapter + 1)));
-        root.addView(bar);
+        root.addView(topBar());
+        chapLine = Ui.text(this, "", 13, Ui.DIM);
+        chapLine.setPadding(Ui.dp(this, 16), 0, Ui.dp(this, 16), Ui.dp(this, 6));
+        chapLine.setSingleLine(true);
+        chapLine.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        chapLine.setOnClickListener(v -> contents());
+        root.addView(chapLine);
+        View line = new View(this);
+        line.setBackgroundColor(Ui.LINE);
+        root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
         list = new ListView(this);
         list.setDividerHeight(0);
         list.setBackgroundColor(Ui.BG);
+        list.setClipToPadding(false);
+        list.setPadding(0, Ui.dp(this, 8), 0, Ui.dp(this, 24));
+        list.setOnScrollListener(new android.widget.AbsListView.OnScrollListener() {
+            @Override public void onScrollStateChanged(android.widget.AbsListView v, int s) { }
+            @Override public void onScroll(android.widget.AbsListView v, int first, int vis, int total) { progress(); }
+        });
         root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        LinearLayout foot = Ui.row(this);
-        foot.setPadding(p, p, p, p);
-        foot.addView(Ui.weight(Ui.button(this, "A−", v -> font(-1)), 1));
-        foot.addView(Ui.weight(Ui.button(this, "A+", v -> font(1)), 1));
-        foot.addView(Ui.weight(Ui.button(this, "Colours", v -> { col.colours = !col.colours; sp.edit().putBoolean("colours", col.colours).apply(); draw(true); }), 1));
-        foot.addView(Ui.weight(Ui.button(this, "Contents", v -> contents()), 1));
-        foot.addView(Ui.weight(Ui.button(this, "Known…", v -> chapterKnown()), 1));
-        root.addView(foot);
+        undoBar = Ui.row(this);
+        undoBar.setVisibility(View.GONE);
+        root.addView(undoBar);
+        root.addView(navBar());
         setContentView(root);
         draw(false);
+    }
+
+    // ---------------------------------------------------------------- the bars
+    private View iconBtn(int res, String what, View.OnClickListener l) {
+        android.widget.ImageView iv = Ui.icon(this, res, 22, Ui.TEXT);
+        iv.setPadding(Ui.dp(this, 10), Ui.dp(this, 10), Ui.dp(this, 10), Ui.dp(this, 10));
+        iv.setBackground(Ui.press(0x00000000, 0, Ui.dp(this, 99)));
+        iv.setContentDescription(what);
+        iv.setOnClickListener(l);
+        iv.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44)));
+        return iv;
+    }
+
+    private View topBar() {
+        LinearLayout bar = Ui.row(this);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(Ui.dp(this, 4), Ui.dp(this, 6), Ui.dp(this, 4), Ui.dp(this, 2));
+        TextView back = Ui.text(this, "‹", 26, Ui.TEXT);
+        back.setGravity(Gravity.CENTER);
+        back.setBackground(Ui.press(0x00000000, 0, Ui.dp(this, 99)));
+        back.setContentDescription("Back to the books");
+        back.setOnClickListener(v -> finish());
+        bar.addView(back, new LinearLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 44)));
+        TextView t = Ui.text(this, book.title, 17, Ui.TEXT);
+        t.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+        t.setSingleLine(true);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        t.setOnClickListener(v -> rename(t));
+        bar.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView pill = Ui.pill(this, lang().toUpperCase(Locale.ROOT), Ui.DIM, Ui.CARD2);
+        LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        pl.leftMargin = Ui.dp(this, 6);
+        pl.rightMargin = Ui.dp(this, 2);
+        bar.addView(pill, pl);
+        View ls = iconBtn(R.drawable.ic_rd_listen, "Listen", v -> listen());
+        listenIcon = (android.widget.ImageView) ls;
+        bar.addView(ls);
+        bar.addView(iconBtn(R.drawable.ic_pl_items, "Contents", v -> contents()));
+        bar.addView(iconBtn(R.drawable.ic_pl_tune, "Reader options", v -> options()));
+        return bar;
+    }
+
+    private View navBar() {
+        LinearLayout box = Ui.col(this);
+        box.setPadding(Ui.dp(this, 12), Ui.dp(this, 4), Ui.dp(this, 12), Ui.dp(this, 10));
+        // the book's progress (the PC's .rprog line)
+        bookBar = new FrameLayout(this);
+        bookBar.setBackground(Ui.round(Ui.mix(Ui.CARD, Ui.TEXT, 0.12f), Ui.dp(this, 2)));
+        bookBar.setClipToOutline(true);
+        bookFill = new View(this);
+        bookFill.setBackground(Ui.round(Ui.ACCENT, Ui.dp(this, 2)));
+        bookBar.addView(bookFill, new FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT));
+        box.addView(bookBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 3)));
+        LinearLayout r = Ui.row(this);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(0, Ui.dp(this, 8), 0, 0);
+        backBtn = Ui.button(this, "‹ Back", v -> go(chapter - 1, false));
+        nextBtn = Ui.primary(this, "Next ›", v -> go(chapter + 1, true));
+        LinearLayout mid = Ui.col(this);
+        mid.setGravity(Gravity.CENTER);
+        posText = Ui.text(this, "", 13, Ui.TEXT);
+        posText.setGravity(Gravity.CENTER);
+        unkText = Ui.text(this, "", 12, Ui.DIM);
+        unkText.setGravity(Gravity.CENTER);
+        mid.addView(posText);
+        mid.addView(unkText);
+        mid.setBackground(Ui.press(0x00000000, 0, Ui.dp(this, Ui.RS)));
+        mid.setPadding(Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4), Ui.dp(this, 4));
+        mid.setOnClickListener(v -> wordList());
+        r.addView(backBtn);
+        r.addView(mid, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        r.addView(nextBtn);
+        box.addView(r);
+        return box;
+    }
+
+    private void progress() {
+        if (bookBar == null || list == null) return;
+        int before = 0, all = Math.max(1, book.paraCount());
+        for (int i = 0; i < chapter && i < book.chapters.size(); i++) before += book.chapters.get(i).paras.size();
+        float f = (before + list.getFirstVisiblePosition()) / (float) all;
+        int w = Math.round(bookBar.getWidth() * Math.max(0, Math.min(1, f)));
+        if (bookFill.getLayoutParams().width != w) { bookFill.getLayoutParams().width = w; bookFill.requestLayout(); }
+        posText.setText((chapter + 1) + " / " + book.chapters.size() + " · " + Math.round(f * 100) + " %");
+    }
+
+    // ---------------------------------------------------------------- moving
+    private void go(int c, boolean forward) {
+        if (c < 0 || c >= book.chapters.size()) return;
+        stopListening();
+        if (forward && sp.getBoolean("rd_pageknown", false)) markChapterKnownQuietly();
+        chapter = c;
+        firstPara = 0;
+        draw(false);
+    }
+
+    /** "Turning the page marks the rest as known" (the PC's option): the unknown words of the chapter you leave, with Undo. */
+    private void markChapterKnownQuietly() {
+        Set<String> words = new HashSet<>(unknown.keySet());
+        if (words.isEmpty()) return;
+        app.store(lang()).markKnown(words);
+        int left = chapter;
+        undoBar.removeAllViews();
+        undoBar.setPadding(Ui.dp(this, 16), Ui.dp(this, 6), Ui.dp(this, 12), 0);
+        undoBar.setGravity(Gravity.CENTER_VERTICAL);
+        undoBar.addView(Ui.weight(Ui.text(this, words.size() + " word(s) of chapter " + (left + 1) + " marked known", 13, Ui.DIM), 1));
+        undoBar.addView(Ui.small(this, "Undo", v -> { app.store(lang()).markUnknown(words); undoBar.setVisibility(View.GONE); draw(true); }));
+        undoBar.setVisibility(View.VISIBLE);
+        undoBar.postDelayed(() -> undoBar.setVisibility(View.GONE), 12000);
+    }
+
+    private void rename(TextView t) {
+        android.widget.EditText in = Ui.input(this, book.title, "Title");
+        LinearLayout box = Ui.col(this);
+        box.setPadding(Ui.dp(this, 16), 0, Ui.dp(this, 16), Ui.dp(this, 16));
+        box.addView(in);
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        Ui.add(box, Ui.buttons(this, Ui.flat(this, "Cancel", v -> Ui.dismiss(d[0])), Ui.primary(this, "Rename", v -> {
+            String s = in.getText().toString().trim();
+            if (s.isEmpty()) return;
+            book.title = s;
+            sp.edit().putString("btitle_" + book.id, s).apply();
+            t.setText(s);
+            Ui.dismiss(d[0]);
+        })), 12);
+        d[0] = Ui.sheet(this, "Rename the book", box, false);
+    }
+
+    /** The chapters, the one you are in marked; tap one to go there (the PC's ☰ Contents). */
+    private void contents() {
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 8), 0, Ui.dp(this, 8), Ui.dp(this, 12));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        View cur = null;
+        for (int i = 0; i < book.chapters.size(); i++) {
+            final int k = i;
+            LinearLayout r = Ui.row(this);
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setPadding(Ui.dp(this, 12), Ui.dp(this, 12), Ui.dp(this, 12), Ui.dp(this, 12));
+            boolean here = i == chapter;
+            r.setBackground(Ui.press(here ? Ui.mix(Ui.BG, Ui.ACCENT, 0.16f) : 0x00000000, 0, Ui.dp(this, Ui.RS)));
+            TextView t = Ui.text(this, book.chapters.get(i).title, 15, here ? Ui.ACCENT : Ui.TEXT);
+            if (here) t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            r.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            r.addView(Ui.text(this, String.valueOf(i + 1), 12, Ui.DIM));
+            r.setOnClickListener(v -> { Ui.dismiss(d[0]); go(k, false); });
+            l.addView(r);
+            if (here) cur = r;
+        }
+        android.widget.ScrollView sv = Ui.scroll(this, l);
+        d[0] = Ui.sheet(this, "Contents", sv, true);
+        View c0 = cur;
+        if (c0 != null) sv.post(() -> sv.scrollTo(0, Math.max(0, c0.getTop() - sv.getHeight() / 3)));
+    }
+
+    /** Text size, font, colours and the page-turn marking: the PC's Reader options, as a sheet. */
+    private void options() {
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 16));
+        l.addView(Ui.section(this, "Text"));
+        LinearLayout g = Ui.group(this);
+        LinearLayout sz = Ui.row(this);
+        TextView val = Ui.text(this, Math.round(size) + "", 15, Ui.TEXT);
+        val.setGravity(Gravity.CENTER);
+        val.setMinWidth(Ui.dp(this, 36));
+        sz.addView(Ui.small(this, "A−", v -> { font(-1); val.setText(Math.round(size) + ""); }));
+        sz.addView(val);
+        sz.addView(Ui.small(this, "A+", v -> { font(1); val.setText(Math.round(size) + ""); }));
+        Ui.srow(g, "Text size", null, sz, null);
+        String[] fonts = {"Serif (like a book)", "Sans-serif"};
+        boolean serif = sp.getBoolean("rd_serif", true);
+        Ui.pickRow(g, "Font", fonts[serif ? 0 : 1], v -> Ui.choose(this, "Font", fonts, serif ? 0 : 1, i -> {
+            sp.edit().putBoolean("rd_serif", i == 0).apply();
+            draw(true);
+        }));
+        l.addView(g);
+        l.addView(Ui.section(this, "Words"));
+        LinearLayout g2 = Ui.group(this);
+        Ui.switchRow(g2, "Colour the unknown words", "Off: plain text; tapping a word still opens its card.", col.colours, (b, on) -> {
+            col.colours = on;
+            sp.edit().putBoolean("colours", on).apply();
+            draw(true);
+        });
+        Ui.switchRow(g2, "Next › marks the rest as known", "Going to the next chapter adds its still-coloured words to your known words (the ones you looked up or made a card of stay). Undo appears for a while.",
+                sp.getBoolean("rd_pageknown", false), (b, on) -> sp.edit().putBoolean("rd_pageknown", on).apply());
+        Ui.pickRow(g2, "Mark this chapter's words as known…", "", v -> chapterKnown());
+        l.addView(g2);
+        l.addView(Ui.section(this, "Screen"));
+        LinearLayout g3 = Ui.group(this);
+        Ui.switchRow(g3, "Keep the screen on", "While a book is open.", sp.getBoolean("rd_awake", false), (b, on) -> {
+            sp.edit().putBoolean("rd_awake", on).apply();
+            if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });
+        l.addView(g3);
+        Ui.sheet(this, "Reader options", Ui.scroll(this, l), false);
     }
 
     private void font(int d) {
@@ -89,19 +312,113 @@ public final class Reader extends Activity {
         draw(true);
     }
 
-    private void go(int c) {
-        if (c < 0 || c >= book.chapters.size()) return;
-        chapter = c;
-        firstPara = 0;
-        draw(false);
+    // ---------------------------------------------------------------- the word list (the PC's side panel)
+    private void wordList() {
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 16));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        if (unknown.isEmpty()) l.addView(Ui.hint(this, "No unknown words in this chapter."));
+        else {
+            l.addView(Ui.hint(this, "This chapter's words you don't know yet, the most frequent first. Tap one to go to it."));
+            LinearLayout g = Ui.group(this);
+            int n = 0;
+            for (Map.Entry<String, Integer> e : unknown.entrySet()) {
+                if (++n > 300) break;
+                String w = e.getKey();
+                Ui.srow(g, w, null, Ui.text(this, e.getValue() + "×", 13, Ui.DIM), v -> { Ui.dismiss(d[0]); findWord(w); });
+            }
+            l.addView(g);
+            Ui.add(l, Ui.button(this, "Mark all " + unknown.size() + " as known…", v -> { Ui.dismiss(d[0]); chapterKnown(); }), 12);
+        }
+        d[0] = Ui.sheet(this, "Unknown words · chapter " + (chapter + 1), Ui.scroll(this, l), !unknown.isEmpty());
     }
 
-    private void contents() {
-        String[] names = new String[book.chapters.size()];
-        for (int i = 0; i < names.length; i++) names[i] = (i == chapter ? "▶ " : "") + (i + 1) + ". " + book.chapters.get(i).title;
-        Ui.choose(this, "Contents", names, -1, i -> go(i));
+    private void findWord(String w) {
+        List<String> ps = book.chapters.get(chapter).paras;
+        for (int i = 0; i < ps.size(); i++) {
+            for (int[] t : Subs.words(ps.get(i))) {
+                if (ps.get(i).substring(t[0], t[1]).equalsIgnoreCase(w)) { list.setSelection(i); return; }
+            }
+        }
     }
 
+    /** Counts this chapter's unknown words (off the screen's thread), for the line under the text and the word list. */
+    private void countUnknown() {
+        int ch = chapter;
+        List<String> paras = book.chapters.get(ch).paras;
+        app.bg(() -> {
+            Map<String, Integer> c = new LinkedHashMap<>();
+            for (String para : paras) {
+                for (int[] w : Subs.words(para)) {
+                    String word = para.substring(w[0], w[1]);
+                    if (word.length() < 2 || !col.state(word).equals("u")) continue;
+                    c.merge(word.toLowerCase(Locale.ROOT), 1, Integer::sum);
+                }
+            }
+            List<Map.Entry<String, Integer>> es = new ArrayList<>(c.entrySet());
+            es.sort((a, b) -> b.getValue() - a.getValue());
+            app.post(() -> {
+                if (ch != chapter) return;
+                unknown.clear();
+                for (Map.Entry<String, Integer> e : es) unknown.put(e.getKey(), e.getValue());
+                unkText.setText(unknown.isEmpty() ? "nothing new in this chapter" : unknown.size() + " unknown in this chapter");
+            });
+        });
+    }
+
+    // ---------------------------------------------------------------- listening (the phone's voice reads from where you are)
+    private void listen() {
+        if (speaking) { stopListening(); return; }
+        if (tts == null) {
+            Ui.toast(this, "Starting the voice…");
+            tts = new TextToSpeech(this, st -> {
+                if (st != TextToSpeech.SUCCESS) { app.post(() -> Ui.alert(this, "Listen", "The phone has no text-to-speech voice. Install one in the phone's settings (Accessibility → Text-to-speech).")); tts = null; return; }
+                int r = tts.setLanguage(new Locale(lang()));
+                if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED)
+                    app.post(() -> Ui.toast(this, "No " + lang().toUpperCase(Locale.ROOT) + " voice on this phone: install one in the text-to-speech settings"));
+                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override public void onStart(String id) { }
+                    @Override public void onDone(String id) { app.post(() -> { if (speaking) speak(speakAt + 1); }); }
+                    @Override public void onError(String id) { app.post(Reader.this::stopListening); }
+                });
+                app.post(() -> speak(list.getFirstVisiblePosition()));
+            });
+            return;
+        }
+        speak(list.getFirstVisiblePosition());
+    }
+
+    private void speak(int para) {
+        List<String> ps = book.chapters.get(chapter).paras;
+        if (para >= ps.size()) {
+            if (chapter + 1 < book.chapters.size()) { int keep = 0; chapter++; firstPara = keep; draw(false); speaking = true; listenOn(true); speak(0); }
+            else stopListening();
+            return;
+        }
+        speaking = true;
+        listenOn(true);
+        speakAt = para;
+        if (para < list.getFirstVisiblePosition() || para > list.getLastVisiblePosition() - 1) list.smoothScrollToPositionFromTop(para, Ui.dp(this, 24));
+        tts.speak(ps.get(para), TextToSpeech.QUEUE_FLUSH, null, "p" + para);
+        if (list.getAdapter() instanceof BaseAdapter) ((BaseAdapter) list.getAdapter()).notifyDataSetChanged();
+    }
+
+    private void stopListening() {
+        boolean was = speaking;
+        speaking = false;
+        speakAt = -1;
+        if (tts != null) tts.stop();
+        listenOn(false);
+        if (was && list.getAdapter() instanceof BaseAdapter) ((BaseAdapter) list.getAdapter()).notifyDataSetChanged();
+    }
+
+    private void listenOn(boolean on) {
+        if (listenIcon == null) return;
+        listenIcon.setColorFilter(on ? Ui.ON_ACC : Ui.TEXT);
+        listenIcon.setBackground(on ? Ui.round(Ui.ACCENT, Ui.dp(this, 99)) : Ui.press(0x00000000, 0, Ui.dp(this, 99)));
+    }
+
+    // ---------------------------------------------------------------- the text
     private void save() {
         int pos = list == null ? 0 : list.getFirstVisiblePosition();
         int before = 0, all = Math.max(1, book.paraCount());
@@ -116,11 +433,19 @@ public final class Reader extends Activity {
 
     @Override protected void onPause() { super.onPause(); Stopwatch.stop(); if (book != null && list != null) save(); }
 
+    @Override protected void onDestroy() { if (tts != null) { tts.stop(); tts.shutdown(); tts = null; } super.onDestroy(); }
+
     private void draw(boolean keep) {
         int at = keep ? list.getFirstVisiblePosition() : firstPara;
         Book.Chapter ch = book.chapters.get(chapter);
-        head.setText((chapter + 1) + "/" + book.chapters.size() + " · " + ch.title);
+        chapLine.setText("Chapter " + (chapter + 1) + " of " + book.chapters.size() + " · " + ch.title);
+        backBtn.setEnabled(chapter > 0);
+        backBtn.setAlpha(chapter > 0 ? 1f : 0.4f);
+        nextBtn.setEnabled(chapter < book.chapters.size() - 1);
+        nextBtn.setAlpha(chapter < book.chapters.size() - 1 ? 1f : 0.4f);
+        unkText.setText("counting…");
         col.forget();
+        boolean serif = sp.getBoolean("rd_serif", true);
         BaseAdapter ad = new BaseAdapter() {
             private final java.util.Map<Integer, CharSequence> cache = new java.util.concurrent.ConcurrentHashMap<>();
             private final java.util.Set<Integer> asked = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
@@ -153,13 +478,14 @@ public final class Reader extends Activity {
             @Override public View getView(int i, View v, ViewGroup parent) {
                 TextView t = v instanceof TextView ? (TextView) v : new TextView(Reader.this);
                 t.setTextSize(size);
-                t.setLineSpacing(0, 1.3f);
+                t.setLineSpacing(0, 1.35f);
                 t.setTextColor(Ui.TEXT);
-                t.setTypeface(android.graphics.Typeface.SERIF);
-                int pad = Ui.dp(Reader.this, 14);
+                t.setTypeface(serif ? android.graphics.Typeface.SERIF : android.graphics.Typeface.SANS_SERIF);
+                int pad = Ui.dp(Reader.this, 18);
                 t.setPadding(pad, Ui.dp(Reader.this, 6), pad, Ui.dp(Reader.this, 6));
                 t.setMovementMethod(LinkMovementMethod.getInstance());
                 t.setHighlightColor(0x553584E4);
+                t.setBackgroundColor(i == speakAt ? Ui.mix(Ui.BG, Ui.ACCENT, 0.12f) : 0x00000000);
                 t.setTag(i);
                 CharSequence s = cache.get(i);
                 if (s != null) t.setText(s);
@@ -172,12 +498,14 @@ public final class Reader extends Activity {
         };
         list.setAdapter(ad);
         list.setSelection(Math.min(at, Math.max(0, ch.paras.size() - 1)));
+        list.post(this::progress);
+        countUnknown();
         save();
     }
 
     private void tapped(String word, int at, String text) {
         Cards.Request r = new Cards.Request();
-        r.lang = book.lang.isEmpty() ? app.lang() : book.lang;
+        r.lang = lang();
         r.kind = "text";
         r.sentence = Colourer.sentenceAt(text, at);
         String[] sents = text.split("(?<=[.!?…])\\s+");
@@ -193,28 +521,16 @@ public final class Reader extends Activity {
             if (si + k < sents.length) r.after.add(new Cards.Ctx(sents[si + k], 0, 0));
         }
         r.title = book.title;
-        WordSheet.show(this, book.lang.isEmpty() ? app.lang() : book.lang, word, r, () -> draw(true));
+        WordSheet.show(this, lang(), word, r, () -> draw(true));
     }
 
     /** Marks the unknown words of this chapter as known (after you have read it), with the list to untick first. */
     private void chapterKnown() {
-        String lang = book.lang.isEmpty() ? app.lang() : book.lang;
-        Ui.toast(this, "Counting the unknown words…");
-        app.bg(() -> {
-            Set<String> unk = new LinkedHashSet<>();
-            for (String para : book.chapters.get(chapter).paras) {
-                for (int[] w : Subs.words(para)) {
-                    String word = para.substring(w[0], w[1]);
-                    if (col.state(word).equals("u")) unk.add(word.toLowerCase(Locale.ROOT));
-                }
-            }
-            app.post(() -> {
-                if (unk.isEmpty()) { Ui.alert(this, "Known words", "No unknown words in this chapter."); return; }
-                Ui.dialog(this).setTitle(unk.size() + " unknown words in this chapter")
-                        .setMessage("Mark all of them as known? (Looked-up words stay as they are; you can undo each one in its word card.)")
-                        .setPositiveButton("Mark as known", (d, i) -> { app.store(lang).markKnown(new HashSet<>(unk)); draw(true); })
-                        .setNegativeButton("Cancel", null).show();
-            });
-        });
+        if (unknown.isEmpty()) { Ui.alert(this, "Known words", "No unknown words in this chapter."); return; }
+        Set<String> unk = new LinkedHashSet<>(unknown.keySet());
+        Ui.dialog(this).setTitle(unk.size() + " unknown words in this chapter")
+                .setMessage("Mark all of them as known? (Looked-up words stay as they are; you can undo each one in its word card.)")
+                .setPositiveButton("Mark as known", (d, i) -> { app.store(lang()).markKnown(new HashSet<>(unk)); draw(true); })
+                .setNegativeButton("Cancel", null).show();
     }
 }
