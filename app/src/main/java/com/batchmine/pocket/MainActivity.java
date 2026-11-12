@@ -37,7 +37,7 @@ import java.util.Map;
 
 /** The main screen: Home (continue, shelves), Books, Videos, Words and Settings, with the language and the sync button on top. */
 public final class MainActivity extends Activity {
-    static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3, REQ_PHOTO = 4, REQ_VFOLDER = 5, REQ_BFOLDER = 6, REQ_BACKUP = 11, REQ_RESTORE = 12;
+    static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3, REQ_PHOTO = 4, REQ_VFOLDER = 5, REQ_BFOLDER = 6, REQ_BACKUP = 11, REQ_RESTORE = 12, REQ_DICTCC = 13;
     private App app;
     private FrameLayout body;
     private TextView langBtn, status;
@@ -359,6 +359,14 @@ public final class MainActivity extends Activity {
                     String id = f.getName().replaceAll("\\.json$", ""), own = sp.getString("btitle_" + id, "");
                     if (!own.isEmpty()) bt.put(id.substring(2), own);
                 }
+                Map<String, Object> shv = new java.util.LinkedHashMap<>();
+                if (bs != null) for (File f : bs) {
+                    String id = f.getName().replaceAll("\\.json$", "");
+                    long st = sp.getLong("bshelft_" + id, 0);
+                    if (st > 0) shv.put(id.substring(2), new ArrayList<Object>(Arrays.asList(shelfName(sp.getInt("bshelf_" + id, 0)), (double) st)));
+                }
+                ex.put("shelves", shv);
+                ex.put("phone_only", phoneOnly());
                 ex.put("meta", Details.toPush());
                 ex.put("video_done", done);
                 ex.put("marks", mk);
@@ -410,6 +418,14 @@ public final class MainActivity extends Activity {
                       .putInt("pc_streak", (int) Json.num(hm.get("streak"), 0)).putString("pc_trouble", tw.toString())
                       .putString("pc_home_day", Stopwatch.day(System.currentTimeMillis()));
                 }
+                for (Map.Entry<String, Object> e : Json.obj(ex.get("shelves")).entrySet()) {
+                    List<Object> v = Json.arr(e.getValue());
+                    String id = "pc" + e.getKey();
+                    long t = v.size() < 2 ? 0 : (long) Json.num(v.get(1), 0);
+                    if (t > sp.getLong("bshelft_" + id, 0) && new File(app.dir("books"), id + ".json").isFile())
+                        ed.putInt("bshelf_" + id, shelfNo(String.valueOf(v.get(0)))).putLong("bshelft_" + id, t);
+                }
+                takePcPlaylists(Json.arr(ex.get("playlists")));
                 File[] mine = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
                 if (mine != null) {
                     java.util.Set<String> pcDone = new java.util.HashSet<>();
@@ -864,7 +880,7 @@ public final class MainActivity extends Activity {
     private void openVideo(File f) {
         Intent i = new Intent(this, Player.class);
         i.putExtra("path", f.getPath());
-        if (queueSrc != null && app.prefs().getBoolean("autonext", true)) {
+        if (queueSrc != null && app.flag("autonext", true)) {
             int k = queueSrc.indexOf(f);
             if (k >= 0 && k + 1 < queueSrc.size()) {
                 String[] q = new String[queueSrc.size() - k - 1];
@@ -945,6 +961,45 @@ public final class MainActivity extends Activity {
     private int bookShelf;                                           // 0 reading, 1 finished, 2 put away
     private final Map<String, Object[]> rateCache = new java.util.HashMap<>();
 
+    /** The PC says "" (reading), "done" or "retired"; the phone keeps 0, 1, 2. */
+    static String shelfName(int n) { return n == 1 ? "done" : n == 2 ? "retired" : ""; }
+
+    static int shelfNo(String s) { return "done".equals(s) ? 1 : "retired".equals(s) ? 2 : 0; }
+
+    /** What is on the phone only, for the PC's list: series names, the books that did not come from the PC, the words waiting in the card tray. */
+    private Map<String, Object> phoneOnly() {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        java.util.Set<String> series = new java.util.TreeSet<>();
+        File[] vs = myVideos();
+        if (vs != null) for (File f : vs) { Shows.Ep e = Player.epOf(f); if (!e.show.isEmpty()) series.add(e.show); }
+        List<Object> books = new ArrayList<>(), tray = new ArrayList<>();
+        for (BookInfo b : bookList(app.lang())) if (!b.id.startsWith("pc")) books.add(b.title);
+        for (Cards.Request r : Tray.all()) tray.add(r.word);
+        m.put("series", new ArrayList<Object>(series));
+        m.put("books", books);
+        m.put("tray", tray);
+        return m;
+    }
+
+    /** The PC's playlists become playlists here ("pc…" ids, renewed at each sync) with the videos that are on the phone; your own are not touched. */
+    private void takePcPlaylists(List<Object> pcLists) {
+        File[] fs = myVideos();
+        List<Lists.PL> keep = new ArrayList<>();
+        for (Lists.PL p : Lists.all()) if (!p.id.startsWith("pc")) keep.add(p);
+        if (fs != null) for (Object o : pcLists) {
+            Map<String, Object> m = Json.obj(o);
+            Lists.PL p = new Lists.PL();
+            p.id = "pc" + Json.str(m.get("id"), "");
+            p.name = Json.str(m.get("name"), "Playlist") + " (PC)";
+            for (Object nm : Json.arr(m.get("videos"))) {
+                String want = String.valueOf(nm);
+                for (File f : fs) if (f.getName().equalsIgnoreCase(want) || Player.videoName(f).equalsIgnoreCase(Player.videoName(new File(want)))) { if (!p.items.contains(f.getName())) p.items.add(f.getName()); break; }
+            }
+            if (p.id.length() > 2 && !p.items.isEmpty()) keep.add(p);
+        }
+        Lists.save(keep);
+    }
+
     private int shelfOf(String id) { return app.prefs().getInt("bshelf_" + id, 0); }
 
     /** The two counts the person has switched on ("rate_words", "rate_sents", both on by default). */
@@ -1016,8 +1071,8 @@ public final class MainActivity extends Activity {
         String[] items = {"Rename…", sh == 1 ? "Back to reading" : "Finished: move to Finished", sh == 2 ? "Back to reading" : "Put away (retire)", "How much can I read? (ratings)…", "Delete this book"};
         Ui.choose(this, bk.title, items, -1, w -> {
             if (w == 0) renameBook(bk);
-            else if (w == 1) { app.prefs().edit().putInt("bshelf_" + bk.id, sh == 1 ? 0 : 1).apply(); show(); }
-            else if (w == 2) { app.prefs().edit().putInt("bshelf_" + bk.id, sh == 2 ? 0 : 2).apply(); show(); }
+            else if (w == 1) { app.prefs().edit().putInt("bshelf_" + bk.id, sh == 1 ? 0 : 1).putLong("bshelft_" + bk.id, System.currentTimeMillis()).apply(); show(); }
+            else if (w == 2) { app.prefs().edit().putInt("bshelf_" + bk.id, sh == 2 ? 0 : 2).putLong("bshelft_" + bk.id, System.currentTimeMillis()).apply(); show(); }
             else if (w == 3) ratingsDialog(bk);
             else Ui.dialog(this).setTitle("Delete “" + bk.title + "”?").setMessage("The book is removed from the phone (the PC keeps its copy).")
                     .setPositiveButton("Delete", (d2, i) -> { bk.file.delete(); openBookId = null; show(); }).setNegativeButton("Keep", null).show();
@@ -1854,8 +1909,8 @@ public final class MainActivity extends Activity {
         Ui.pickRow(g, "Accent colour", acc.isEmpty() ? "The theme's own" : Ui.accentName(acc), v -> Pickers.accent(this, this::recreate));
         String ic = app.prefs().getString("icon", "original");
         Ui.pickRow(g, "App icon", "pc".equals(ic) ? "Same as the PC" : Icons.name(ic), v -> Pickers.icon(this, this::show));
-        Ui.switchRow(g, "Coloured words", "Unknown, looked-up and card words coloured in videos and books, as on the PC", app.prefs().getBoolean("colours", true),
-                (b, on) -> app.prefs().edit().putBoolean("colours", on).apply());
+        Ui.switchRow(g, "Coloured words", "Unknown, looked-up and card words coloured in videos and books, as on the PC. Kept for this language (" + app.lang().toUpperCase() + ") only; the text size of books too.", app.flag("colours", true),
+                (b, on) -> app.prefs().edit().putBoolean(app.lk("colours"), on).apply());
         Ui.add(l, g, 0);
 
         // ---- watching and reading
@@ -1865,8 +1920,8 @@ public final class MainActivity extends Activity {
         Ui.pickRow(g, "Stopwatch: stops after", idleName(app.prefs().getInt("sw_idle_read", 90)) + " (book)", v -> idlePick("sw_idle_read"));
         Ui.switchRow(g, "Video player held upright: video on top, lines below", "The picture sits at the top, the subtitle lines scroll underneath (the one being said is highlighted; tap a line to go there, a word for its card). Off: the picture fills the screen. Also the ⬒ button in the player.", app.prefs().getBoolean("player_stack", true),
                 (b, on) -> app.prefs().edit().putBoolean("player_stack", on).apply());
-        Ui.switchRow(g, "Play the next episode by itself", "At the end of a video in a series or playlist, the next one starts.", app.prefs().getBoolean("autonext", true),
-                (b, on) -> app.prefs().edit().putBoolean("autonext", on).apply());
+        Ui.switchRow(g, "Play the next episode by itself", "At the end of a video in a series or playlist, the next one starts. Kept for this language (" + app.lang().toUpperCase() + ") only.", app.flag("autonext", true),
+                (b, on) -> app.prefs().edit().putBoolean(app.lk("autonext"), on).apply());
         l.addView(Ui.hint(this, "Primed listening, hidden subtitles, “i+1” and the other ways to use the lines are chosen inside the player (≡ menu → How to use the lines)."));
         Ui.pickRow(g, "Repeat a line", app.prefs().getInt(Player.lk("loop_times"), app.prefs().getInt("loop_times", 1)) == 0 ? "until you go on" : app.prefs().getInt(Player.lk("loop_times"), app.prefs().getInt("loop_times", 1)) + "×", v -> {
             int[] n = {1, 2, 3, 5, 0};
@@ -1887,6 +1942,14 @@ public final class MainActivity extends Activity {
         imp.setPadding(0, Ui.dp(this, 12), 0, Ui.dp(this, 12));
         imp.addView(Ui.hint(this, "The same wty zip files the PC uses (wty-it-it.zip, and the -ipa one for pronunciation), or a frequency list (Leipzig). A minute or two; then it works offline."));
         imp.addView(Ui.primary(this, "Import a dictionary (.zip)", v -> pick(REQ_DICT, new String[]{"application/zip", "application/x-zip-compressed", "application/octet-stream"}, false)));
+        imp.addView(Ui.hint(this, "dict.cc: its vocabulary file (the .txt with two languages, e.g. “dict.cc de en …”). It is shown folded under the dictionaries in the word card, with the translations to tick for the card."), 0);
+        View ddc = Ui.button(this, "Import a dict.cc file (.txt)", v -> pick(REQ_DICTCC, new String[]{"text/plain", "application/octet-stream", "*/*"}, false));
+        Ui.add(imp, ddc, 10);
+        File[] dccFiles = app.dir("dictcc").listFiles((d, n) -> n.endsWith(".dcc"));
+        if (dccFiles != null) for (File df : dccFiles) {
+            String nm = df.getName().replaceAll("\\.dcc$", "");
+            imp.addView(Ui.small(this, "dict.cc: " + nm + "  ✕ remove", v -> Ui.dialog(this).setTitle("Remove " + nm + "?").setPositiveButton("Remove", (d2, i2) -> { df.delete(); app.dictCcChanged(); show(); }).setNegativeButton("Keep", null).show()));
+        }
         if (g.getChildCount() > 0) { View line = new View(this); line.setBackgroundColor(Ui.LINE); g.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)); }
         g.addView(imp);
         Ui.add(l, g, 0);
@@ -1936,6 +1999,12 @@ public final class MainActivity extends Activity {
                 .setNegativeButton("Cancel", null).show());
         Ui.add(l, g, 0);
         l.addView(Ui.hint(this, "Dictionaries are not in it (import them again, a minute or two each); videos stay where they are."));
+
+        // ---- storage
+        l.addView(Ui.section(this, "Storage"));
+        g = Ui.group(this);
+        Ui.pickRow(g, "What takes space", "dictionaries, videos, books, card media, thumbnails", v -> Storage.show(this, app));
+        Ui.add(l, g, 0);
 
         // ---- updates, problems
         l.addView(Ui.section(this, "This app"));
@@ -2172,6 +2241,7 @@ public final class MainActivity extends Activity {
         if (req == REQ_BOOK) addBook(uris.get(0));
         else if (req == REQ_VIDEO) addVideos(uris);
         else if (req == REQ_DICT) importDict(uris.get(0));
+        else if (req == REQ_DICTCC) importDictCc(uris.get(0));
         else if (req == REQ_PHOTO) photoBook(uris);
     }
 
@@ -2389,6 +2459,32 @@ public final class MainActivity extends Activity {
                 app.dicts.reload();
                 app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.toast(this, "Imported " + d.getName()); show(); });
             } catch (IOException | RuntimeException e) {
+                app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.alert(this, "Could not import", String.valueOf(e.getMessage())); });
+            }
+        });
+    }
+
+    /** A dict.cc vocabulary file: read once into the app's own small file (a minute or so for the big ones). */
+    private void importDictCc(Uri u) {
+        String name = "dict.cc";
+        try (android.database.Cursor c = getContentResolver().query(u, new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst() && c.getString(0) != null) name = c.getString(0);
+        } catch (RuntimeException ignored) { }
+        final String fname = name, lang = app.lang();
+        TextView msg = Ui.text(this, "Reading dict.cc…", 14, Ui.TEXT);
+        LinearLayout box = Ui.col(this);
+        box.setPadding(Ui.dp(this, 20), Ui.dp(this, 10), Ui.dp(this, 20), Ui.dp(this, 10));
+        box.addView(msg);
+        AlertDialog dlg = Ui.dialog(this).setTitle("Importing").setView(box).setCancelable(false).show();
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        app.bg(() -> {
+            File out = new File(app.dir("dictcc"), fname.replaceAll("\\.[A-Za-z0-9]{1,4}$", "").replaceAll("[^\\w. -]+", "_") + " [" + lang + "].dcc");
+            try (InputStream in = getContentResolver().openInputStream(u); java.io.OutputStream o = new java.io.BufferedOutputStream(new java.io.FileOutputStream(out))) {
+                int n = com.batchmine.pocket.core.DictCc.convert(new java.io.BufferedInputStream(in, 1 << 16), fname, lang, o);
+                app.dictCcChanged();
+                app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.toast(this, "dict.cc: " + n + " entries"); show(); });
+            } catch (IOException | RuntimeException e) {
+                out.delete();
                 app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.alert(this, "Could not import", String.valueOf(e.getMessage())); });
             }
         });

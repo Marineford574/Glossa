@@ -317,7 +317,18 @@ public final class WordSheet {
             app.bg(() -> {
                 Dictionaries.Result r = app.dicts.lookup(wd, lang);
                 ws.lookedUp(r.found() ? r.lemma() : wd);
-                String html = page(r, app.dicts.styles(lang), app.dicts.hasTerms(lang), lang);
+                String htmlBase = page(r, app.dicts.styles(lang), app.dicts.hasTerms(lang), lang);
+                if (app.hasDictCc()) {                           // dict.cc, folded under the dictionaries; open when they had nothing
+                    try {
+                        java.util.Set<String> cands = new java.util.LinkedHashSet<>();
+                        cands.add(wd);
+                        cands.addAll(app.dicts.candidates(wd, lang));
+                        if (r.found()) cands.add(r.lemma());
+                        String blk = com.batchmine.pocket.core.DictCc.html(com.batchmine.pocket.core.DictCc.lookup(app.dictCc(), cands), !r.found(), "");
+                        if (!blk.isEmpty()) htmlBase = htmlBase.replace("</body></html>", "<style>details.dcc{margin-top:10px;border-top:1px solid " + Ui.hex(Ui.LINE) + "}details.dcc summary{padding:8px 0;font-weight:bold}.dcch{color:" + Ui.hex(Ui.DIM) + ";font-size:13px;margin-top:4px}.dccw{display:inline-block;margin:2px 10px 2px 0}.dccw input{width:19px;height:19px;margin:0 6px 0 0;vertical-align:-4px;accent-color:" + Ui.hex(Ui.ACCENT) + "}.dccp{font-size:14px;margin:3px 0}</style>" + blk + "</body></html>");
+                    } catch (RuntimeException ignored) { /* a damaged dict.cc file must not spoil the card */ }
+                }
+                final String html = htmlBase;
                 app.post(() -> {
                     if (!wd.equals(word[0])) return;                 // another word was typed meanwhile
                     res[0] = r;

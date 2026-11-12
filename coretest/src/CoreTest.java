@@ -160,6 +160,28 @@ public class CoreTest {
       check("rating: words known % and whole sentences known", tot.words == 13 && tot.unknownWords == 2 && tot.wordsPct() == 85 && tot.sentences == 3 && tot.knownSentences == 1 && tot.sentencesPct() == 33,
           tot.words + " " + tot.unknownWords + " " + tot.sentences + " " + tot.knownSentences);
     }
+    {
+      java.util.List<Subs.Cue> ea = new java.util.ArrayList<>(), eb = new java.util.ArrayList<>();
+      String[] song = {"Wir fahren durch die Nacht", "Und nichts hält uns zurück", "Die Sterne sind so nah", "Wir sind die Besten hier"};
+      for (int i = 0; i < 4; i++) { ea.add(new Subs.Cue(10 + i * 8, 15 + i * 8, song[i])); eb.add(new Subs.Cue(22 + i * 8, 27 + i * 8, song[i])); }
+      ea.add(new Subs.Cue(60, 63, "Guten Morgen, wie geht es dir")); eb.add(new Subs.Cue(70, 73, "Ganz etwas anderes heute Abend"));
+      double[] in = IntroFinder.intro(ea, eb);
+      check("intro: the shared song found in the other episode (22 s to 51 s)", in != null && Math.abs(in[0] - 22) < 0.01 && Math.abs(in[1] - 51) < 0.01, in == null ? "null" : in[0] + " " + in[1]);
+      check("intro: none when nothing is shared", IntroFinder.intro(ea.subList(4, 5), eb.subList(4, 5)) == null, "");
+    }
+    {
+      String dcc = "zugehen\tto approach\tverb\nzugehen\tto walk up to\tverb\nauf jdn. zugehen\tto approach sb.\tverb\nDer Hund {m}\tthe dog\tnoun\nSchön {f}\tbeauty\tn\n";
+      java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+      int n = DictCc.convert(new java.io.ByteArrayInputStream(dcc.getBytes("UTF-8")), "dict.cc de en vocab.txt", "de", bo);
+      java.io.File tf = java.io.File.createTempFile("dcc", ".dcc"); java.nio.file.Files.write(tf.toPath(), bo.toByteArray());
+      DictCc.Table dt = DictCc.read(tf);
+      java.util.List<DictCc.Found> f = DictCc.lookup(java.util.Arrays.asList(dt), java.util.Arrays.asList("Zugehen"));
+      check("dict.cc: label from the file name, translations and phrases found", dt.label.equals("EN") && f.size() == 1 && f.get(0).words.size() == 2 && f.get(0).phrases.size() == 1 && f.get(0).phrases.get(0)[0].equals("auf jdn. zugehen"), String.valueOf(f.size()));
+      String h = DictCc.html(f, false, "");
+      check("dict.cc: folded block with tick boxes", h.contains("<details class=dcc>") && h.contains("data-t='to approach'") && !h.contains("<details class=dcc open"), h);
+      check("dict.cc: a word that is not there gives nothing", DictCc.lookup(java.util.Arrays.asList(dt), java.util.Arrays.asList("nichtda")).isEmpty() && DictCc.html(new java.util.ArrayList<DictCc.Found>(), false, "").isEmpty(), "");
+      tf.delete();
+    }
     System.out.println(fails == 0 ? "all passed" : fails + " FAILED");
     System.exit(fails == 0 ? 0 : 1);
   }

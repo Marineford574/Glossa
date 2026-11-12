@@ -99,8 +99,8 @@ public final class Reader extends Activity {
         if (!own.isEmpty()) book.title = own;
         if (book.chapters.isEmpty()) { Ui.toast(this, "This book has no text"); finish(); return; }
         col = new Colourer(app.lang().equals(book.lang) || book.lang.isEmpty() ? app.lang() : book.lang);
-        col.colours = sp.getBoolean("colours", true);
-        size = sp.getFloat("fs", 19);
+        col.colours = app.flag("colours", true);
+        size = sp.getFloat(app.lk("fs"), sp.getFloat("fs", 19));
         chapter = Math.max(0, Math.min(sp.getInt("rc_" + id, 0), book.chapters.size() - 1));
         firstPara = Math.max(0, sp.getInt("rp_" + id, 0));
         if (sp.getBoolean("rd_awake", false)) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -408,7 +408,7 @@ public final class Reader extends Activity {
         LinearLayout g2 = Ui.group(this);
         Ui.switchRow(g2, "Colour the unknown words", "Off: plain text; tapping a word still opens its card.", col.colours, (b, on) -> {
             col.colours = on;
-            sp.edit().putBoolean("colours", on).apply();
+            sp.edit().putBoolean(app.lk("colours"), on).apply();
             draw(true);
         });
         Ui.switchRow(g2, "Next › marks the rest as known", "Going to the next chapter adds its still-coloured words to your known words (the ones you looked up or made a card of stay). Undo appears for a while.",
@@ -429,7 +429,7 @@ public final class Reader extends Activity {
 
     private void font(int d) {
         size = Math.max(13, Math.min(34, size + d * 2));
-        sp.edit().putFloat("fs", size).apply();
+        sp.edit().putFloat(app.lk("fs"), size).apply();
         draw(true);
     }
 

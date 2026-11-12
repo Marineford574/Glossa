@@ -54,6 +54,34 @@ public final class App extends Application {
 
     public SharedPreferences prefs() { return getSharedPreferences("pocket", MODE_PRIVATE); }
 
+    private java.util.List<com.batchmine.pocket.core.DictCc.Table> dcc;
+
+    /** The dict.cc files imported here (this language's), read into memory the first time they are needed; call off the screen's thread. */
+    public synchronized java.util.List<com.batchmine.pocket.core.DictCc.Table> dictCc() {
+        if (dcc == null) {
+            dcc = new java.util.ArrayList<>();
+            File[] fs = dir("dictcc").listFiles((d, n) -> n.endsWith(".dcc"));
+            if (fs != null) for (File f : fs) {
+                try { dcc.add(com.batchmine.pocket.core.DictCc.read(f)); } catch (java.io.IOException | RuntimeException ignored) { }
+            }
+        }
+        java.util.List<com.batchmine.pocket.core.DictCc.Table> mine = new java.util.ArrayList<>();
+        for (com.batchmine.pocket.core.DictCc.Table t : dcc) if (t.lang.equals(lang())) mine.add(t);
+        return mine;
+    }
+
+    public synchronized void dictCcChanged() { dcc = null; }
+
+    public boolean hasDictCc() {
+        File[] fs = dir("dictcc").listFiles((d, n) -> n.endsWith(".dcc"));
+        return fs != null && fs.length > 0;
+    }
+
+    /** A setting kept per language (text size, word colours, auto-next): "fs_de", "fs_it" …; the plain "fs" is what a language without its own value uses. */
+    public String lk(String key) { return key + "_" + lang(); }
+
+    public boolean flag(String key, boolean def) { return prefs().getBoolean(lk(key), prefs().getBoolean(key, def)); }
+
     public String lang() { return prefs().getString("lang", "it"); }
 
     public void setLang(String l) { prefs().edit().putString("lang", l).apply(); }

@@ -199,7 +199,7 @@ public final class Player extends Activity {
         file = new File(getIntent().getStringExtra("path"));
         lang = app.lang();
         col = new Colourer(lang);
-        col.colours = app.prefs().getBoolean("colours", true);
+        col.colours = app.flag("colours", true);
         root = new FrameLayout(this);
         root.setBackgroundColor(0xFF000000);
         video = new VideoView(this);
@@ -634,6 +634,7 @@ public final class Player extends Activity {
                 int i = Subs.around(main, t - delay);
                 if (i < 0) return;
                 Marks.add(file.getName(), main.get(i).start, main.get(i).text, false);       // a line you replay is a hard one
+                learnHard(main.get(i));
                 loopFrom = main.get(i).start + delay - 0.15;
                 loopUntil = main.get(i).end + delay;
                 int n = app.prefs().getInt(lk("loop_times"), app.prefs().getInt("loop_times", 1));
@@ -804,7 +805,7 @@ public final class Player extends Activity {
         Ui.switchRow(g, "Subtitles", null, !hideSub, (b, on) -> { hideSub = !on; shown = -2; adapter.notifyDataSetChanged(); });
         Ui.switchRow(g, "Translation (2nd track)", null, !hideTr, (b, on) -> { hideTr = !on; shown = -2; adapter.notifyDataSetChanged(); });
         Ui.switchRow(g, "Word colours", "Unknown words coloured, tap a word for its card.", col.colours, (b, on) -> {
-            col.colours = on; app.prefs().edit().putBoolean("colours", on).apply(); col.forget(); spanCache.clear(); shown = -2; adapter.notifyDataSetChanged(); });
+            col.colours = on; app.prefs().edit().putBoolean(app.lk("colours"), on).apply(); col.forget(); spanCache.clear(); shown = -2; adapter.notifyDataSetChanged(); });
         LinearLayout sz = Ui.row(this);
         sz.addView(Ui.small(this, "A−", v -> sizeStep(-1)));
         sz.addView(Ui.small(this, "A+", v -> sizeStep(1)));
@@ -1076,6 +1077,69 @@ public final class Player extends Activity {
         return t;
     }
 
+    /** A line you replay was too fast: its characters per second are kept (the last 40, per language) so the limit for "Slow down fast lines" can be suggested. */
+    private void learnHard(Subs.Cue c) {
+        double len = Math.max(0.3, c.end - c.start);
+        double cps = c.text.replaceAll("<[^>]*>|\\s+", "").length() / len;
+        if (cps < 4 || cps > 40) return;
+        String[] old = app.prefs().getString(lk("hard_cps"), "").split(",");
+        StringBuilder sb = new StringBuilder();
+        int from = Math.max(0, old.length - 39);
+        for (int k = from; k < old.length; k++) if (!old[k].isEmpty()) sb.append(old[k]).append(',');
+        sb.append(String.format(Locale.ROOT, "%.1f", cps));
+        app.prefs().edit().putString(lk("hard_cps"), sb.toString()).apply();
+    }
+
+    /** The limit suggested by the replays: a little below the typical speed of the lines you replayed (null: too few replays yet). */
+    private Float suggestedLimit() {
+        String[] a = app.prefs().getString(lk("hard_cps"), "").split(",");
+        java.util.List<Float> v = new ArrayList<>();
+        for (String x : a) { try { v.add(Float.parseFloat(x)); } catch (NumberFormatException ignored) { /* empty */ } }
+        if (v.size() < 5) return null;
+        java.util.Collections.sort(v);
+        float q = v.get(v.size() / 4);                                  // the slower quarter: most lines you replay are at least this fast
+        return Math.max(8f, Math.round(q - 1f));
+    }
+
+    /** Compares this episode's subtitles with those of other episodes of the series: the shared song / recap at the start is the intro, a shared stretch at the end the credits. */
+    private void autoIntro() {
+        String sk = showKey();
+        if (sk.isEmpty()) { Ui.toast(this, "This video is not named like an episode of a series"); return; }
+        if (main.isEmpty()) { Ui.toast(this, "This video has no subtitles to compare"); return; }
+        final java.util.List<Subs.Cue> mine = new ArrayList<>(main);
+        final double dur = video.getDuration() / 1000.0;
+        Ui.toast(this, "Comparing with the other episodes…");
+        app.bg(() -> {
+            File[] all = app.videoDir().listFiles();
+            int tried = 0;
+            if (all != null) for (File v : all) {
+                if (v.equals(file) || !isVideo(v.getName()) || !showKey().equals(com.batchmine.pocket.core.Shows.key(epOf(v).show))) continue;
+                String stem = v.getName().replaceAll("\\.[^.]+$", "");
+                for (File sf : all) {
+                    String n = sf.getName().toLowerCase(Locale.ROOT);
+                    if (!(n.endsWith(".srt") || n.endsWith(".vtt") || n.endsWith(".ass") || n.endsWith(".ssa")) || !sf.getName().startsWith(stem)) continue;
+                    java.util.List<Subs.Cue> other;
+                    try { other = Subs.parse(Subs.decode(Files.readAllBytes(sf.toPath()))); } catch (IOException | RuntimeException ex) { continue; }
+                    if (other.isEmpty()) continue;
+                    tried++;
+                    double[] in = com.batchmine.pocket.core.IntroFinder.intro(other, mine);
+                    double[] cr = com.batchmine.pocket.core.IntroFinder.credits(other, other.get(other.size() - 1).end + 90, mine, dur);
+                    if (in == null && cr == null) break;                 // nothing shared with this one: try the next episode
+                    android.content.SharedPreferences.Editor e = app.prefs().edit();
+                    StringBuilder msg = new StringBuilder();
+                    if (in != null) { e.putFloat("skipin_" + sk, (float) (in[1] + 0.5)); msg.append("Intro ").append(Ui.time(in[0])).append(" – ").append(Ui.time(in[1])); }
+                    if (cr != null && dur - cr[0] > 20) { e.putFloat("skipout_" + sk, (float) (dur - cr[0])); msg.append(msg.length() > 0 ? "\n" : "").append("Credits from ").append(Ui.time(cr[0])); }
+                    e.apply();
+                    String m = msg + "\n\nfound by comparing with " + com.batchmine.pocket.core.Shows.pretty(videoName(v)) + ". They are skipped in every episode from now on.";
+                    app.post(() -> Ui.alert(this, "Found", m));
+                    return;
+                }
+            }
+            int t = tried;
+            app.post(() -> Ui.alert(this, "Nothing found", t == 0 ? "No other episode of this series with subtitles is on the phone to compare with." : "The subtitles of " + t + " other episode(s) share no song or recap lines with this one. Mark the intro by hand instead."));
+        });
+    }
+
     private void linesTools() {
         android.content.SharedPreferences pr = app.prefs();
         String sk = showKey();
@@ -1093,10 +1157,16 @@ public final class Player extends Activity {
                 if (left < 3) Ui.toast(this, "Go to where the credits begin first");
                 else { pr.edit().putFloat("skipout_" + sk, (float) left).apply(); Ui.toast(this, "The credits are skipped from now on"); }
             }, d));
+            l.addView(menuRow("Find them by comparing with another episode", "", false, this::autoIntro, d));
             if (in > 0 || out > 0) l.addView(menuRow("Forget intro and credits", "", false, () -> pr.edit().remove("skipin_" + sk).remove("skipout_" + sk).apply(), d));
         } else l.addView(Ui.hint(this, "Intro and credits skipping works for videos named like a series (Show S01E02)."));
         l.addView(menuHead("Slow down fast lines"));
         l.addView(Ui.hint(this, "Lines with more characters per second than this play slower. Counted per language."));
+        Float sug = suggestedLimit();
+        int nHard = app.prefs().getString(lk("hard_cps"), "").isEmpty() ? 0 : app.prefs().getString(lk("hard_cps"), "").split(",").length;
+        if (sug != null) l.addView(menuRow("Learned from your replays: " + (int) (float) sug + " per second", "use it", false,
+                () -> { app.prefs().edit().putFloat(lk("slowfast"), sug).apply(); effSpeed = -1; Ui.toast(this, "Lines faster than " + (int) (float) sug + "/s are slowed"); }, d));
+        else l.addView(Ui.hint(this, "Replay lines that were too fast (“Say this line again”): after five of them the app suggests a limit (" + nHard + " so far)."));
         Flow f = new Flow(this, 8);
         float cur = pr.getFloat(lk("slowfast"), 0);
         float[] cps = {0, 13, 16, 19, 23};

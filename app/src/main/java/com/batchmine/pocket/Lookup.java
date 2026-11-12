@@ -21,7 +21,7 @@ final class Lookup {
     private Lookup() { }
 
     static final class Hit {
-        String text, where; File video; Subs.Cue cue;
+        String text, where; File video; Subs.Cue cue; int unknown;
     }
 
     static void open(Activity a, String start) {
@@ -73,7 +73,7 @@ final class Lookup {
                 found.removeView(wait);
                 if (hits.isEmpty()) { found.addView(Ui.hint(a, "None of the books or subtitle files on the phone has it. (Add more videos or books, or search on the PC.)")); return; }
                 LinearLayout g = Ui.group(a);
-                for (Hit h : hits) Ui.srow(g, h.text, h.where, null, v -> {
+                for (Hit h : hits) Ui.srow(g, h.text, (h.unknown == 0 ? "no other new word" : h.unknown + " other new") + " · " + h.where, null, v -> {
                     Cards.Request q = new Cards.Request();
                     q.lang = lang; q.sentence = h.text; q.title = h.where;
                     if (h.video != null) {
@@ -126,7 +126,29 @@ final class Lookup {
                 break;                                           // the first subtitle file of a video is enough
             }
         }
-        out.sort((x, y) -> Integer.compare(Math.abs(x.text.length() - 60), Math.abs(y.text.length() - 60)));
+        // best first, as on the PC: fewest other words you do not know yet, then a good length
+        com.batchmine.pocket.core.WordStore ws = app.store(lang);
+        Map<String, Boolean> unk = new HashMap<>();
+        for (Hit h : out) {
+            int n = 0;
+            for (int[] r : Subs.words(h.text)) {
+                String t = h.text.substring(r[0], r[1]).toLowerCase(Locale.ROOT);
+                if (cands.contains(t)) continue;
+                Boolean u = unk.get(t);
+                if (u == null) {
+                    u = !ws.isKnown(t);
+                    if (u) {
+                        Set<String> c = app.dicts.candidates(t, lang);
+                        if (!app.dicts.listed(c, lang)) u = false;          // a name or junk: does not count
+                        else for (String x : c) if (ws.isKnown(x)) { u = false; break; }
+                    }
+                    unk.put(t, u);
+                }
+                if (u) n++;
+            }
+            h.unknown = n;
+        }
+        out.sort((x, y) -> x.unknown != y.unknown ? Integer.compare(x.unknown, y.unknown) : Integer.compare(Math.abs(x.text.length() - 60), Math.abs(y.text.length() - 60)));
         return out.size() > max ? new ArrayList<>(out.subList(0, max)) : out;
     }
 
