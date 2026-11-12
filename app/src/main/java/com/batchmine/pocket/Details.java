@@ -207,15 +207,15 @@ final class Details {
                 no.setPadding(Ui.dp(c, 6), Ui.dp(c, 6), Ui.dp(c, 10), Ui.dp(c, 6));
                 ok.setContentDescription("Add the tag " + t);
                 no.setContentDescription("Turn down the tag " + t);
-                ok.setOnClickListener(v -> { decide(key, java.util.Arrays.asList(t), new ArrayList<>()); refresh.run(); });
-                no.setOnClickListener(v -> { decide(key, new ArrayList<>(), java.util.Arrays.asList(t)); refresh.run(); });
+                ok.setOnClickListener(v -> { decide(key, java.util.Arrays.asList(t), new ArrayList<>()); redraw(l, c, key, kindWord, name, hints, refresh); });
+                no.setOnClickListener(v -> { decide(key, new ArrayList<>(), java.util.Arrays.asList(t)); redraw(l, c, key, kindWord, name, hints, refresh); });
                 chip.addView(ok); chip.addView(no);
                 f.addView(chip);
             }
             if (sug.size() > 1) {
                 TextView all = Ui.text(c, "Add all", 12, Ui.ACCENT);
                 all.setPadding(Ui.dp(c, 8), Ui.dp(c, 6), Ui.dp(c, 8), Ui.dp(c, 6));
-                all.setOnClickListener(v -> { decide(key, sug, new ArrayList<>()); refresh.run(); });
+                all.setOnClickListener(v -> { decide(key, sug, new ArrayList<>()); redraw(l, c, key, kindWord, name, hints, refresh); });
                 f.addView(all);
             }
             l.addView(f);
@@ -234,6 +234,18 @@ final class Details {
         bt.addView(Ui.weight(Ui.small(c, "✨ Fill in with AI", v -> askAi(c, key, name, hints, false, msg -> { Ui.toast(c, msg); refresh.run(); })), 1));
         l.addView(bt);
         return l;
+    }
+
+    /** A tag taken or turned down: only this block is drawn again, so the page does not jump to the episode you are on. */
+    static void redraw(LinearLayout old, Context c, String key, String kindWord, String name, String hints, Runnable refresh) {
+        android.view.ViewParent p = old.getParent();
+        if (!(p instanceof android.view.ViewGroup)) { refresh.run(); return; }
+        android.view.ViewGroup g = (android.view.ViewGroup) p;
+        int i = g.indexOfChild(old);
+        View nb = block(c, key, kindWord, name, hints, refresh);
+        nb.setLayoutParams(old.getLayoutParams());
+        g.removeViewAt(i);
+        g.addView(nb, i);
     }
 
     static void decide(String key, List<String> accept, List<String> reject) {

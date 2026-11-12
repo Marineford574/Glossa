@@ -105,6 +105,8 @@ public class CoreTest {
       check("epub meta: authors keep their letters, year, description", "Miroslav Krle\u017ea, Ivan Gor\u010di\u0107 & \u0160enoa".equals(m.get("creator")) && "1932".equals(m.get("aired")) && "Ein Maler kehrt zur\u00fcck.".equals(m.get("desc")), m.toString());
       byte[] latin = "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><metadata><dc:creator>D\u00fcrrenmatt, Friedrich</dc:creator></metadata>".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
       check("epub meta: a file in another encoding is read in that encoding", "Friedrich D\u00fcrrenmatt".equals(EpubMeta.parse(latin).get("creator")), EpubMeta.parse(latin).toString());
+      check("dictionary language from its title", "it".equals(Dict.langOfTitle("Leipzig Italian Mixed-Typical")) && "de".equals(Dict.langOfTitle("Leipzig German Mixed-Typical"))
+          && "it".equals(Dict.langOfTitle("wty-it-de")) && "".equals(Dict.langOfTitle("JMdict")) && "hr".equals(Dict.langOfTitle("Hrvatski rječnik")), "");
       Map<String, Object> bk = new java.util.LinkedHashMap<>();
       check("meta: the book's own details fill empty fields only", Meta.fromEpub(bk, m, 1) && !Meta.fromEpub(bk, m, 2) && bk.get("creator") != null, bk.toString());
     }

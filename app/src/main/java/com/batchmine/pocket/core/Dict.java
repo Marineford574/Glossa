@@ -31,7 +31,8 @@ public final class Dict implements Closeable {
         this.dir = dir;
         Map<String, Object> m = Json.obj(Json.parse(new String(Files.readAllBytes(new File(dir, "meta.json").toPath()), StandardCharsets.UTF_8)));
         title = Json.str(m.get("title"), dir.getName());
-        lang = Json.str(m.get("lang"), "");
+        String byTitle = langOfTitle(title);
+        lang = !byTitle.isEmpty() ? byTitle : Json.str(m.get("lang"), "");     // "Leipzig Italian …" is Italian, whatever its index.json says
         revision = Json.str(m.get("revision"), "");
         terms = Table.exists(dir, "terms") ? new Table(dir, "terms") : null;
         forms = Table.exists(dir, "forms") ? new Table(dir, "forms") : null;
@@ -105,7 +106,7 @@ public final class Dict implements Closeable {
         String title = Json.str(index.get("title"), "dictionary");
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("title", title);
-        meta.put("lang", Json.str(index.get("sourceLanguage"), ""));
+        meta.put("lang", !langOfTitle(title).isEmpty() ? langOfTitle(title) : Json.str(index.get("sourceLanguage"), ""));
         meta.put("target", Json.str(index.get("targetLanguage"), ""));
         meta.put("revision", Json.str(index.get("revision"), ""));
         meta.put("imported", System.currentTimeMillis());
@@ -114,6 +115,23 @@ public final class Dict implements Closeable {
         if (dest.exists()) deleteTree(dest);              // a newer revision of the same dictionary replaces the old one
         if (!tmp.renameTo(dest)) throw new IOException("could not store the dictionary in " + dest);
         return dest;
+    }
+
+    static final String[][] LANG_NAMES = {
+        {"it", "italian", "italiano"}, {"de", "german", "deutsch"}, {"hr", "croatian", "hrvatski"}, {"en", "english"}, {"fr", "french", "français", "francais"},
+        {"es", "spanish", "español", "espanol"}, {"pt", "portuguese", "português", "portugues"}, {"nl", "dutch", "nederlands"}, {"ru", "russian"},
+        {"pl", "polish", "polski"}, {"sr", "serbian"}, {"bs", "bosnian"}, {"sl", "slovenian", "slovene"}, {"cs", "czech"}, {"sv", "swedish"},
+        {"ja", "japanese"}, {"zh", "chinese"}, {"ko", "korean"}, {"la", "latin"}, {"el", "greek"}};
+
+    /** The language a dictionary's title names: "Leipzig Italian Mixed-Typical" → it, "wty-de-en" → de (its first code); "" when it names none. */
+    public static String langOfTitle(String title) {
+        String t = title == null ? "" : title.toLowerCase(java.util.Locale.ROOT);
+        java.util.regex.Matcher w = java.util.regex.Pattern.compile("^(?:wty|kty)[-_]([a-z]{2,3})[-_]").matcher(t);
+        if (w.find()) return w.group(1);
+        for (String[] l : LANG_NAMES)
+            for (int i = 1; i < l.length; i++)
+                if (java.util.regex.Pattern.compile("(^|[^\\p{L}])" + java.util.regex.Pattern.quote(l[i]) + "($|[^\\p{L}])").matcher(t).find()) return l[0];
+        return "";
     }
 
     /** [term, reading, defTags, rules, score, glossary, sequence, termTags] */
