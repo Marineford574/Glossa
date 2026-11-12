@@ -323,8 +323,8 @@ public final class Player extends Activity {
         setContentView(root);
         arrange();
         delay = app.prefs().getFloat("delay_" + file.getName(), 0f);
-        speed = app.prefs().getFloat("speed", 1f);
-        pmode = app.prefs().getString("pmode", app.prefs().getBoolean("prime", false) ? "primed" : "normal");
+        speed = app.prefs().getFloat(lk("speed"), app.prefs().getFloat("speed", 1f));
+        pmode = app.prefs().getString(lk("pmode"), app.prefs().getString("pmode", app.prefs().getBoolean("prime", false) ? "primed" : "normal"));
         prime = "primed".equals(pmode);
         speedLbl.setText(speedLabel(speed));
         loadSubs();
@@ -501,14 +501,14 @@ public final class Player extends Activity {
 
     /** Does primed listening stop at this line? (Settings: every line, or only lines with an unknown word.) */
     private boolean primes(int i) {
-        if (!"unk".equals(app.prefs().getString("prime_when", "all"))) return true;
+        if (!"unk".equals(app.prefs().getString(lk("prime_when"), app.prefs().getString("prime_when", "all")))) return true;
         Integer q = unkN.get(i);
         return q != null && q > 0;
     }
 
     /** Does the mode need to know how many unknown words the lines have? */
     private boolean needsCounts() {
-        return "i1".equals(pmode) || "pi1".equals(pmode) || "punk".equals(pmode) || (prime && "unk".equals(app.prefs().getString("prime_when", "all")));
+        return "i1".equals(pmode) || "pi1".equals(pmode) || "punk".equals(pmode) || (prime && "unk".equals(app.prefs().getString(lk("prime_when"), app.prefs().getString("prime_when", "all"))));
     }
 
     /** Works out, off the screen's thread, how many unknown words the next lines have (the dictionary is on disk). */
@@ -552,7 +552,7 @@ public final class Player extends Activity {
     private void setMode(String m) {
         pmode = m;
         prime = "primed".equals(m);
-        app.prefs().edit().putString("pmode", m).putBoolean("prime", prime).apply();
+        app.prefs().edit().putString(lk("pmode"), m).putBoolean("prime", prime).apply();
         primeLine = -1; primePhase = ""; pausedAt = -2; shown = -2;
         if (needsCounts()) qualify(Math.max(0, lastLine));
         if (adapter != null) adapter.notifyDataSetChanged();
@@ -631,7 +631,7 @@ public final class Player extends Activity {
                 Marks.add(file.getName(), main.get(i).start, main.get(i).text, false);       // a line you replay is a hard one
                 loopFrom = main.get(i).start + delay - 0.15;
                 loopUntil = main.get(i).end + delay;
-                int n = app.prefs().getInt("loop_times", 1);
+                int n = app.prefs().getInt(lk("loop_times"), app.prefs().getInt("loop_times", 1));
                 loopLeft = n;                                  // 0: round and round until you press next / prev / play on
                 primeLine = i; primePhase = ""; shown = -2;
                 video.seekTo((int) (Math.max(0, loopFrom) * 1000));
@@ -720,7 +720,7 @@ public final class Player extends Activity {
 
     private void setSpeed(float v) {
         speed = Math.max(0.25f, Math.min(4f, v));
-        app.prefs().edit().putFloat("speed", speed).apply();
+        app.prefs().edit().putFloat(lk("speed"), speed).apply();
         speedLbl.setText(speedLabel(speed));
         applySpeed();
     }
@@ -808,19 +808,19 @@ public final class Player extends Activity {
         Ui.pickRow(g2, "Speed", speedLabel(speed), v -> { Ui.dismiss(d[0]); speedMenu(); });
         Ui.pickRow(g2, "Mode", modeName(), v -> { Ui.dismiss(d[0]); modeMenu(); });
         if (prime) {
-            boolean unkOnly = "unk".equals(app.prefs().getString("prime_when", "all"));
+            boolean unkOnly = "unk".equals(app.prefs().getString(lk("prime_when"), app.prefs().getString("prime_when", "all")));
             Ui.switchRow(g2, "Primed only on lines with a new word", "Off: every line is primed.", unkOnly, (b, on) -> {
-                app.prefs().edit().putString("prime_when", on ? "unk" : "all").apply();
+                app.prefs().edit().putString(lk("prime_when"), on ? "unk" : "all").apply();
                 if (on) qualify(Math.max(0, lastLine));
             });
         }
-        int times = app.prefs().getInt("loop_times", 1);
+        int times = app.prefs().getInt(lk("loop_times"), app.prefs().getInt("loop_times", 1));
         String[] tn = {"1 time", "2 times", "3 times", "5 times", "until I go on"};
         int[] tv = {1, 2, 3, 5, 0};
         int ci = 0;
         for (int i = 0; i < tv.length; i++) if (tv[i] == times) ci = i;
         final int cur = ci;
-        Ui.pickRow(g2, "Say a line again", tn[cur], v -> { Ui.dismiss(d[0]); Ui.choose(this, "Say a line again", tn, cur, i -> app.prefs().edit().putInt("loop_times", tv[i]).apply()); });
+        Ui.pickRow(g2, "Say a line again", tn[cur], v -> { Ui.dismiss(d[0]); Ui.choose(this, "Say a line again", tn, cur, i -> app.prefs().edit().putInt(lk("loop_times"), tv[i]).apply()); });
         l.addView(g2);
         if (getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT) {
             l.addView(Ui.section(this, "Layout"));
@@ -1052,6 +1052,9 @@ public final class Player extends Activity {
         trText.setText(tr);
         trText.setVisibility(tr.length() > 0 && !hideTr ? View.VISIBLE : View.GONE);
     }
+
+    /** The key of a player setting for the language being learnt: each language remembers its own speed, mode, repeat count ... (the general value is the start). */
+    static String lk(String key) { return key + "_" + App.get().lang(); }
 
     private File mainFile;                                   // the subtitle file the lines came from (edits are written back to it)
     private boolean sheetUp;                                 // the word sheet is open: the video stays paused (nothing restarts it)

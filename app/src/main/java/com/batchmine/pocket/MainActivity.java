@@ -1691,10 +1691,10 @@ public final class MainActivity extends Activity {
         Ui.switchRow(g, "Play the next episode by itself", "At the end of a video in a series or playlist, the next one starts.", app.prefs().getBoolean("autonext", true),
                 (b, on) -> app.prefs().edit().putBoolean("autonext", on).apply());
         l.addView(Ui.hint(this, "Primed listening, hidden subtitles, “i+1” and the other ways to use the lines are chosen inside the player (≡ menu → How to use the lines)."));
-        Ui.pickRow(g, "Repeat a line", app.prefs().getInt("loop_times", 1) == 0 ? "until you go on" : app.prefs().getInt("loop_times", 1) + "×", v -> {
+        Ui.pickRow(g, "Repeat a line", app.prefs().getInt(Player.lk("loop_times"), app.prefs().getInt("loop_times", 1)) == 0 ? "until you go on" : app.prefs().getInt(Player.lk("loop_times"), app.prefs().getInt("loop_times", 1)) + "×", v -> {
             int[] n = {1, 2, 3, 5, 0};
             String[] names = {"once", "2 times", "3 times", "5 times", "until you go on"};
-            Ui.choose(this, "↺ plays the line", names, -1, i -> { app.prefs().edit().putInt("loop_times", n[i]).apply(); show(); });
+            Ui.choose(this, "↺ plays the line", names, -1, i -> { app.prefs().edit().putInt(Player.lk("loop_times"), n[i]).apply(); show(); });
         });
         Ui.add(l, g, 0);
         l.addView(Ui.hint(this, "The stopwatch counts while a video plays (or is paused for a moment) and while you read. Its time goes to the PC at each sync and shows in Home → This week there."));
