@@ -1314,7 +1314,7 @@ public final class MainActivity extends Activity {
                     }
                     Ui.choose(this, "Subtitles for " + name + (e.episode >= 0 ? " · " + e.label() : ""), items, -1, i -> getSub(f, lg, Json.obj(rs.get(i)), e));
                 });
-            } catch (IOException ex) { app.post(() -> Ui.alert(this, "Could not search", explain(ex))); }
+            } catch (RuntimeException ex) { app.post(() -> Ui.alert(this, "Could not search", ex.toString())); }
         });
     }
 
