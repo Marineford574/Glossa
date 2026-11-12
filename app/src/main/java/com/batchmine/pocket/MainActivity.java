@@ -617,24 +617,36 @@ public final class MainActivity extends Activity {
         Ui.add(l, g, 8);
     }
 
-    /** The lines of one video to review: tap one to watch it there; long-press to take it off the list. */
+    /** The lines of one video to review, in the app's colours: tap one to watch it there, ✕ takes it off the list, "Clear all" empties it. */
     private void reviewLines(File f) {
         List<Marks.Line> ls = Marks.list(f.getName());
         if (ls.isEmpty()) { show(); return; }
-        String[] items = new String[ls.size()];
-        for (int i = 0; i < items.length; i++) items[i] = (ls.get(i).marked() ? "★ " : "") + Ui.time(ls.get(i).start) + "  " + ls.get(i).text;
-        android.app.AlertDialog dlg = Ui.dialog(this).setTitle(Player.niceName(f) + " (" + items.length + ")")
-                .setItems(items, (d, i) -> { Intent it = new Intent(this, Player.class); it.putExtra("path", f.getPath()); it.putExtra("at", ls.get(i).start); startActivity(it); })
-                .setNeutralButton("Clear all", (d, w) -> { Marks.clear(f.getName()); show(); })
-                .setNegativeButton("Close", null).create();
-        dlg.setOnShowListener(x -> dlg.getListView().setOnItemLongClickListener((a, v, pos, id) -> {
-            Marks.remove(f.getName(), ls.get(pos).start);
-            Ui.dismiss(dlg);
-            show();
-            reviewLines(f);
-            return true;
-        }));
-        if (!Ui.gone(this)) dlg.show();
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 12));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        for (Marks.Line ln : ls) {
+            LinearLayout r = Ui.row(this);
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setPadding(Ui.dp(this, 12), Ui.dp(this, 10), Ui.dp(this, 4), Ui.dp(this, 10));
+            r.setBackground(Ui.press(Ui.CARD, Ui.LINE, Ui.dp(this, Ui.R)));
+            LinearLayout col = Ui.col(this);
+            TextView meta = Ui.text(this, (ln.marked() ? "★ " : "") + Ui.time(ln.start) + (ln.marked() ? "" : "  ·  hard line"), 12, ln.marked() ? 0xFFF5C211 : Ui.DIM);
+            col.addView(meta);
+            TextView tx = Ui.text(this, ln.text, 16, Ui.TEXT);
+            tx.setPadding(0, Ui.dp(this, 2), 0, 0);
+            col.addView(tx);
+            r.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView x = Ui.text(this, "✕", 16, Ui.DIM);
+            x.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 10));
+            x.setContentDescription("Take it off the list");
+            x.setOnClickListener(v -> { Marks.remove(f.getName(), ln.start); Ui.dismiss(d[0]); show(); reviewLines(f); });
+            r.addView(x);
+            r.setOnClickListener(v -> { Ui.dismiss(d[0]); Intent it = new Intent(this, Player.class); it.putExtra("path", f.getPath()); it.putExtra("at", ln.start); startActivity(it); });
+            Ui.add(l, r, 6);
+        }
+        Ui.add(l, Ui.flat(this, "Clear all " + ls.size(), v -> { Marks.clear(f.getName()); Ui.dismiss(d[0]); show(); }), 6);
+        String ep = vepisode(f);
+        d[0] = Ui.sheet(this, vtitle(f) + (ep.isEmpty() ? "" : " · " + ep.replace("Season ", "S").replace(" · Episode ", " E")), Ui.scroll(this, l), true);
     }
 
     private interface Covers { List<View> make(); }

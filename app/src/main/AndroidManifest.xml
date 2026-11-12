@@ -14,7 +14,7 @@
     <application
         android:name=".App"
         android:allowBackup="true"
-        android:icon="@drawable/ic_launcher"
+        android:icon="@mipmap/ic_launcher"
         android:label="Glossa Pocket"
         android:largeHeap="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
@@ -36,7 +36,7 @@
         </activity>
         <!-- The icon on the launcher: one of these is switched on (Settings → Look → App icon); Icons.java switches them. -->
         <activity-alias android:name=".Launch" android:targetActivity=".MainActivity" android:exported="true" android:enabled="true"
-            android:icon="@drawable/ic_launcher" android:label="Glossa Pocket">
+            android:icon="@mipmap/ic_launcher" android:label="Glossa Pocket">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

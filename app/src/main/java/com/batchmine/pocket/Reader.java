@@ -47,12 +47,38 @@ public final class Reader extends Activity {
     private android.widget.Button backBtn, nextBtn;
     private LinearLayout undoBar;
     private float size = 19;
+    private int base, count;                     // the page on screen: paragraphs base .. base+count-1 of the chapter
+    private boolean full;                    // fullscreen reading: the bars are hidden
+    private View topBarV, topLine, navBarV;
+    private TextView fullBtn;
+    private android.widget.ImageView fsTop;
     private SharedPreferences sp;
     private TextToSpeech tts;
     private boolean speaking;
     private int speakAt = -1;
     private android.widget.ImageView listenIcon;
     private final Map<String, Integer> unknown = new LinkedHashMap<>();   // this chapter's unknown words, most frequent first
+
+    private static final String[] FONT_KEYS = {"serif", "sans", "light", "condensed", "mono"};
+    private static final String[] FONT_NAMES = {"Serif (like a book)", "Sans-serif", "Sans-serif light", "Condensed", "Monospace"};
+    private static final int[] PAGE_CHARS = {0, 1200, 2500, 5000};
+    private static final String[] PAGE_NAMES = {"The whole chapter", "A little (about 1 200 characters)", "Some (about 2 500)", "A lot (about 5 000)"};
+
+    private int fontIndex() {
+        String k = sp.getString("rd_font", sp.getBoolean("rd_serif", true) ? "serif" : "sans");
+        for (int i = 0; i < FONT_KEYS.length; i++) if (FONT_KEYS[i].equals(k)) return i;
+        return 0;
+    }
+
+    private android.graphics.Typeface typeface() {
+        switch (FONT_KEYS[fontIndex()]) {
+            case "sans": return android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL);
+            case "light": return android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL);
+            case "condensed": return android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL);
+            case "mono": return android.graphics.Typeface.MONOSPACE;
+            default: return android.graphics.Typeface.SERIF;
+        }
+    }
 
     static int[] position(String id) {
         SharedPreferences p = App.get().prefs();
@@ -82,7 +108,8 @@ public final class Reader extends Activity {
         LinearLayout root = Ui.col(this);
         Ui.bars(this);
         root.setBackgroundColor(Ui.BG);
-        root.addView(topBar());
+        topBarV = topBar();
+        root.addView(topBarV);
         chapLine = Ui.text(this, "", 13, Ui.DIM);
         chapLine.setPadding(Ui.dp(this, 16), 0, Ui.dp(this, 16), Ui.dp(this, 6));
         chapLine.setSingleLine(true);
@@ -92,6 +119,7 @@ public final class Reader extends Activity {
         View line = new View(this);
         line.setBackgroundColor(Ui.LINE);
         root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        topLine = line;
         list = new ListView(this);
         list.setDividerHeight(0);
         list.setBackgroundColor(Ui.BG);
@@ -105,9 +133,25 @@ public final class Reader extends Activity {
         undoBar = Ui.row(this);
         undoBar.setVisibility(View.GONE);
         root.addView(undoBar);
-        root.addView(navBar());
-        setContentView(root);
+        navBarV = navBar();
+        root.addView(navBarV);
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackgroundColor(Ui.BG);
+        frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        fullBtn = Ui.text(this, "⤡", 20, Ui.TEXT);
+        fullBtn.setGravity(Gravity.CENTER);
+        fullBtn.setBackground(Ui.round(Ui.mix(Ui.BG, Ui.TEXT, 0.18f), Ui.dp(this, 99)));
+        fullBtn.setAlpha(0.55f);
+        fullBtn.setContentDescription("Show the bars again");
+        fullBtn.setVisibility(View.GONE);
+        fullBtn.setOnClickListener(v -> fullscreen(false));
+        FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 40), Gravity.TOP | Gravity.END);
+        fl.topMargin = Ui.dp(this, 28);
+        fl.rightMargin = Ui.dp(this, 10);
+        frame.addView(fullBtn, fl);
+        setContentView(frame);
         draw(false);
+        if (sp.getBoolean("rd_full", false)) fullscreen(true);
     }
 
     // ---------------------------------------------------------------- the bars
@@ -145,6 +189,7 @@ public final class Reader extends Activity {
         View ls = iconBtn(R.drawable.ic_rd_listen, "Listen", v -> listen());
         listenIcon = (android.widget.ImageView) ls;
         bar.addView(ls);
+        bar.addView(iconBtn(R.drawable.ic_pl_fs, "Fullscreen", v -> fullscreen(true)));
         bar.addView(iconBtn(R.drawable.ic_pl_items, "Contents", v -> contents()));
         bar.addView(iconBtn(R.drawable.ic_pl_tune, "Reader options", v -> options()));
         return bar;
@@ -164,8 +209,8 @@ public final class Reader extends Activity {
         LinearLayout r = Ui.row(this);
         r.setGravity(Gravity.CENTER_VERTICAL);
         r.setPadding(0, Ui.dp(this, 8), 0, 0);
-        backBtn = Ui.button(this, "‹ Back", v -> go(chapter - 1, false));
-        nextBtn = Ui.primary(this, "Next ›", v -> go(chapter + 1, true));
+        backBtn = Ui.button(this, "‹ Back", v -> step(false));
+        nextBtn = Ui.primary(this, "Next ›", v -> step(true));
         LinearLayout mid = Ui.col(this);
         mid.setGravity(Gravity.CENTER);
         posText = Ui.text(this, "", 13, Ui.TEXT);
@@ -188,10 +233,72 @@ public final class Reader extends Activity {
         if (bookBar == null || list == null) return;
         int before = 0, all = Math.max(1, book.paraCount());
         for (int i = 0; i < chapter && i < book.chapters.size(); i++) before += book.chapters.get(i).paras.size();
-        float f = (before + list.getFirstVisiblePosition()) / (float) all;
+        float f = (before + base + list.getFirstVisiblePosition()) / (float) all;
         int w = Math.round(bookBar.getWidth() * Math.max(0, Math.min(1, f)));
         if (bookFill.getLayoutParams().width != w) { bookFill.getLayoutParams().width = w; bookFill.requestLayout(); }
-        posText.setText((chapter + 1) + " / " + book.chapters.size() + " · " + Math.round(f * 100) + " %");
+        List<int[]> pg = pageChars() > 0 ? pages() : null;
+        posText.setText((chapter + 1) + " / " + book.chapters.size() + (pg == null ? "" : " · page " + (pageOf(pg, base) + 1) + "/" + pg.size()) + " · " + Math.round(f * 100) + " %");
+    }
+
+    // ---------------------------------------------------------------- fullscreen
+    /** Hides the bars (and the phone's own) so the text fills the screen; the small ⤡ button, Back or the options bring them back. */
+    private void fullscreen(boolean on) {
+        full = on;
+        sp.edit().putBoolean("rd_full", on).apply();
+        int v = on ? View.GONE : View.VISIBLE;
+        topBarV.setVisibility(v);
+        topLine.setVisibility(v);
+        chapLine.setVisibility(v);
+        navBarV.setVisibility(on ? View.GONE : View.VISIBLE);
+        fullBtn.setVisibility(on ? View.VISIBLE : View.GONE);
+        View dv = getWindow().getDecorView();
+        dv.setSystemUiVisibility(on ? (View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY) : View.SYSTEM_UI_FLAG_VISIBLE);
+        if (!on) Ui.bars(this);
+        if (list != null) list.post(this::progress);
+        if (on) Ui.toast(this, "Tap ⤡ (top right) or Back to show the bars again");
+    }
+
+    @Override public void onBackPressed() { if (full) fullscreen(false); else super.onBackPressed(); }
+
+    // ---------------------------------------------------------------- pages
+    /** How much of a chapter is on one page: 0 = the whole chapter, otherwise about this many characters. */
+    private int pageChars() { return sp.getInt("rd_page", 0); }
+
+    /** The chapter cut into pages of whole paragraphs, each at least pageChars() long (the last may be shorter). */
+    private List<int[]> pages() {
+        List<String> ps = book.chapters.get(chapter).paras;
+        List<int[]> out = new ArrayList<>();
+        int n = pageChars();
+        if (n <= 0 || ps.isEmpty()) { out.add(new int[]{0, ps.size()}); return out; }
+        int from = 0, len = 0;
+        for (int i = 0; i < ps.size(); i++) {
+            len += ps.get(i).length();
+            if (len >= n) { out.add(new int[]{from, i + 1}); from = i + 1; len = 0; }
+        }
+        if (from < ps.size()) {
+            if (!out.isEmpty() && len < n / 3) out.get(out.size() - 1)[1] = ps.size();   // a tiny tail joins the page before
+            else out.add(new int[]{from, ps.size()});
+        }
+        return out;
+    }
+
+    private int pageOf(List<int[]> pg, int para) {
+        for (int i = 0; i < pg.size(); i++) if (para < pg.get(i)[1]) return i;
+        return pg.size() - 1;
+    }
+
+    /** Next / Back: a page when pages are on, otherwise a chapter; at the end of a chapter on to the next one. */
+    private void step(boolean forward) {
+        List<int[]> pg = pages();
+        int p = pageOf(pg, base);
+        if (forward) {
+            if (p + 1 < pg.size()) { stopListening(); firstPara = pg.get(p + 1)[0]; draw(false); list.setSelection(0); }
+            else go(chapter + 1, true);
+        } else {
+            if (p > 0) { stopListening(); firstPara = pg.get(p - 1)[0]; draw(false); }
+            else if (chapter > 0) { go(chapter - 1, false); if (pageChars() > 0) { firstPara = -1; draw(false); } }
+        }
     }
 
     // ---------------------------------------------------------------- moving
@@ -265,6 +372,7 @@ public final class Reader extends Activity {
 
     /** Text size, font, colours and the page-turn marking: the PC's Reader options, as a sheet. */
     private void options() {
+        android.app.Dialog[] opts = new android.app.Dialog[1];
         LinearLayout l = Ui.col(this);
         l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 16));
         l.addView(Ui.section(this, "Text"));
@@ -277,11 +385,23 @@ public final class Reader extends Activity {
         sz.addView(val);
         sz.addView(Ui.small(this, "A+", v -> { font(1); val.setText(Math.round(size) + ""); }));
         Ui.srow(g, "Text size", null, sz, null);
-        String[] fonts = {"Serif (like a book)", "Sans-serif"};
-        boolean serif = sp.getBoolean("rd_serif", true);
-        Ui.pickRow(g, "Font", fonts[serif ? 0 : 1], v -> Ui.choose(this, "Font", fonts, serif ? 0 : 1, i -> {
-            sp.edit().putBoolean("rd_serif", i == 0).apply();
+        int fi = fontIndex();
+        Ui.pickRow(g, "Font", FONT_NAMES[fi], v -> Ui.choose(this, "Font", FONT_NAMES, fontIndex(), i -> {
+            sp.edit().putString("rd_font", FONT_KEYS[i]).apply();
+            Ui.dismiss(opts[0]);
             draw(true);
+            options();
+        }));
+        int pc = pageChars();
+        int pi = 0;
+        for (int i = 0; i < PAGE_CHARS.length; i++) if (PAGE_CHARS[i] == pc) pi = i;
+        final int pcur = pi;
+        Ui.pickRow(g, "On one page", PAGE_NAMES[pi], v -> Ui.choose(this, "How much is on one page", PAGE_NAMES, pcur, i -> {
+            sp.edit().putInt("rd_page", PAGE_CHARS[i]).apply();
+            Ui.dismiss(opts[0]);
+            firstPara = base + (list == null ? 0 : list.getFirstVisiblePosition());
+            draw(false);
+            options();
         }));
         l.addView(g);
         l.addView(Ui.section(this, "Words"));
@@ -302,8 +422,9 @@ public final class Reader extends Activity {
             if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         });
+        Ui.pickRow(g3, "Fullscreen reading", "Hides the bars", v -> { Ui.dismiss(opts[0]); fullscreen(true); });
         l.addView(g3);
-        Ui.sheet(this, "Reader options", Ui.scroll(this, l), false);
+        opts[0] = Ui.sheet(this, "Reader options", Ui.scroll(this, l), true);
     }
 
     private void font(int d) {
@@ -337,7 +458,11 @@ public final class Reader extends Activity {
         List<String> ps = book.chapters.get(chapter).paras;
         for (int i = 0; i < ps.size(); i++) {
             for (int[] t : Subs.words(ps.get(i))) {
-                if (ps.get(i).substring(t[0], t[1]).equalsIgnoreCase(w)) { list.setSelection(i); return; }
+                if (ps.get(i).substring(t[0], t[1]).equalsIgnoreCase(w)) {
+                    if (i < base || i >= base + count) { firstPara = i; draw(false); }
+                    else list.setSelection(i - base);
+                    return;
+                }
             }
         }
     }
@@ -381,24 +506,26 @@ public final class Reader extends Activity {
                     @Override public void onDone(String id) { app.post(() -> { if (speaking) speak(speakAt + 1); }); }
                     @Override public void onError(String id) { app.post(Reader.this::stopListening); }
                 });
-                app.post(() -> speak(list.getFirstVisiblePosition()));
+                app.post(() -> speak(base + list.getFirstVisiblePosition()));
             });
             return;
         }
-        speak(list.getFirstVisiblePosition());
+        speak(base + list.getFirstVisiblePosition());
     }
 
     private void speak(int para) {
         List<String> ps = book.chapters.get(chapter).paras;
         if (para >= ps.size()) {
-            if (chapter + 1 < book.chapters.size()) { int keep = 0; chapter++; firstPara = keep; draw(false); speaking = true; listenOn(true); speak(0); }
+            if (chapter + 1 < book.chapters.size()) { chapter++; firstPara = 0; draw(false); speaking = true; listenOn(true); speak(0); }
             else stopListening();
             return;
         }
+        if (para < base || para >= base + count) { firstPara = para; draw(false); }   // on to the next page
         speaking = true;
         listenOn(true);
         speakAt = para;
-        if (para < list.getFirstVisiblePosition() || para > list.getLastVisiblePosition() - 1) list.smoothScrollToPositionFromTop(para, Ui.dp(this, 24));
+        int rel = para - base;
+        if (rel < list.getFirstVisiblePosition() || rel > list.getLastVisiblePosition() - 1) list.smoothScrollToPositionFromTop(rel, Ui.dp(this, 24));
         tts.speak(ps.get(para), TextToSpeech.QUEUE_FLUSH, null, "p" + para);
         if (list.getAdapter() instanceof BaseAdapter) ((BaseAdapter) list.getAdapter()).notifyDataSetChanged();
     }
@@ -420,7 +547,7 @@ public final class Reader extends Activity {
 
     // ---------------------------------------------------------------- the text
     private void save() {
-        int pos = list == null ? 0 : list.getFirstVisiblePosition();
+        int pos = list == null ? 0 : base + list.getFirstVisiblePosition();
         int before = 0, all = Math.max(1, book.paraCount());
         for (int i = 0; i < chapter && i < book.chapters.size(); i++) before += book.chapters.get(i).paras.size();
         sp.edit().putInt("rc_" + book.id, chapter).putInt("rp_" + book.id, pos)
@@ -436,26 +563,34 @@ public final class Reader extends Activity {
     @Override protected void onDestroy() { if (tts != null) { tts.stop(); tts.shutdown(); tts = null; } super.onDestroy(); }
 
     private void draw(boolean keep) {
-        int at = keep ? list.getFirstVisiblePosition() : firstPara;
         Book.Chapter ch = book.chapters.get(chapter);
+        List<int[]> pg = pages();
+        int at = keep ? base + list.getFirstVisiblePosition() : firstPara;
+        boolean lastTop = at < 0;
+        at = Math.max(0, Math.min(at < 0 ? Integer.MAX_VALUE / 2 : at, Math.max(0, ch.paras.size() - 1)));
+        int pgi = pageOf(pg, at);
+        base = pg.get(pgi)[0];
+        count = pg.get(pgi)[1] - base;
+        if (lastTop) at = base;
         chapLine.setText("Chapter " + (chapter + 1) + " of " + book.chapters.size() + " · " + ch.title);
-        backBtn.setEnabled(chapter > 0);
-        backBtn.setAlpha(chapter > 0 ? 1f : 0.4f);
-        nextBtn.setEnabled(chapter < book.chapters.size() - 1);
-        nextBtn.setAlpha(chapter < book.chapters.size() - 1 ? 1f : 0.4f);
+        boolean canBack = chapter > 0 || pgi > 0, canNext = chapter < book.chapters.size() - 1 || pgi + 1 < pg.size();
+        backBtn.setEnabled(canBack);
+        backBtn.setAlpha(canBack ? 1f : 0.4f);
+        nextBtn.setEnabled(canNext);
+        nextBtn.setAlpha(canNext ? 1f : 0.4f);
         unkText.setText("counting…");
         col.forget();
-        boolean serif = sp.getBoolean("rd_serif", true);
+        final android.graphics.Typeface face = typeface();
         BaseAdapter ad = new BaseAdapter() {
             private final java.util.Map<Integer, CharSequence> cache = new java.util.concurrent.ConcurrentHashMap<>();
             private final java.util.Set<Integer> asked = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
             /** Colours paragraphs FROM..TO off the screen's thread (the dictionary is read from disk), then updates the lines on screen. */
             private void colour(int from, int to) {
-                for (int k = from; k <= to && k < ch.paras.size(); k++) if (k >= 0) asked.add(k);
+                for (int k = from; k <= to && k < base + count; k++) if (k >= 0) asked.add(k);
                 final BaseAdapter me = this;
                 app.bg(() -> {
-                    for (int k = Math.max(0, from); k <= to && k < ch.paras.size(); k++) {
+                    for (int k = Math.max(0, from); k <= to && k < base + count; k++) {
                         if (list.getAdapter() != me) return;                 // another chapter was opened meanwhile
                         if (cache.containsKey(k)) continue;
                         CharSequence cs = col.spans(ch.paras.get(k), (word, start, end, text) -> tapped(word, start, text));
@@ -472,32 +607,33 @@ public final class Reader extends Activity {
                 });
             }
 
-            @Override public int getCount() { return ch.paras.size(); }
-            @Override public Object getItem(int i) { return ch.paras.get(i); }
+            @Override public int getCount() { return count; }
+            @Override public Object getItem(int i) { return ch.paras.get(base + i); }
             @Override public long getItemId(int i) { return i; }
             @Override public View getView(int i, View v, ViewGroup parent) {
                 TextView t = v instanceof TextView ? (TextView) v : new TextView(Reader.this);
                 t.setTextSize(size);
                 t.setLineSpacing(0, 1.35f);
                 t.setTextColor(Ui.TEXT);
-                t.setTypeface(serif ? android.graphics.Typeface.SERIF : android.graphics.Typeface.SANS_SERIF);
+                t.setTypeface(face);
                 int pad = Ui.dp(Reader.this, 18);
                 t.setPadding(pad, Ui.dp(Reader.this, 6), pad, Ui.dp(Reader.this, 6));
                 t.setMovementMethod(LinkMovementMethod.getInstance());
                 t.setHighlightColor(0x553584E4);
-                t.setBackgroundColor(i == speakAt ? Ui.mix(Ui.BG, Ui.ACCENT, 0.12f) : 0x00000000);
-                t.setTag(i);
-                CharSequence s = cache.get(i);
+                final int k = base + i;
+                t.setBackgroundColor(k == speakAt ? Ui.mix(Ui.BG, Ui.ACCENT, 0.12f) : 0x00000000);
+                t.setTag(k);
+                CharSequence s = cache.get(k);
                 if (s != null) t.setText(s);
                 else {
-                    t.setText(ch.paras.get(i));                              // at once, plain; the colours follow a moment later
-                    if (!asked.contains(i)) colour(i, i + 12);                // and the next paragraphs are got ready as you read on
+                    t.setText(ch.paras.get(k));                              // at once, plain; the colours follow a moment later
+                    if (!asked.contains(k)) colour(k, k + 12);                // and the next paragraphs are got ready as you read on
                 }
                 return t;
             }
         };
         list.setAdapter(ad);
-        list.setSelection(Math.min(at, Math.max(0, ch.paras.size() - 1)));
+        list.setSelection(Math.max(0, Math.min(at - base, count - 1)));
         list.post(this::progress);
         countUnknown();
         save();

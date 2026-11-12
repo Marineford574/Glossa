@@ -40,7 +40,10 @@ public final class Player extends Activity {
     private android.media.MediaPlayer mpl;
     private float speed = 1f;
     private double delay;                                // seconds the subtitles are late (+) or early (-), saved for each video
-    private boolean autoPause;
+    /** How the lines are used (the PC's modes): normal, primed, hidden, paused, i1 (subtitles only on i+1 lines), pi1 / punk (pause on i+1 / on new-word lines). */
+    private String pmode = "normal";
+    private int lastLine = -1;                           // the newest line that has started: the list masks the ones after it
+    private boolean wasPlaying = true;
     private int pausedAt = -2;
     private TextView speedLbl, statusText;
     private android.widget.ImageView playIcon, markBtn, fsIcon;
@@ -62,7 +65,7 @@ public final class Player extends Activity {
     private int primeLine = -1;
     private String primePhase = "";                      // "read" (paused, translation) / "listen" (playing, no text) / ""
     private int loopLeft;                                // plays still to come of the line ↺ repeats (0 = until you go on)
-    private final java.util.Map<Integer, Boolean> qual = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<Integer, Integer> unkN = new java.util.concurrent.ConcurrentHashMap<>();   // line → how many words in it you don't know
 
     static boolean isVideo(String n) {
         n = n.toLowerCase(Locale.ROOT);
@@ -261,8 +264,8 @@ public final class Player extends Activity {
         arrange();
         delay = app.prefs().getFloat("delay_" + file.getName(), 0f);
         speed = app.prefs().getFloat("speed", 1f);
-        autoPause = app.prefs().getBoolean("autopause", false);
-        prime = app.prefs().getBoolean("prime", false);
+        pmode = app.prefs().getString("pmode", app.prefs().getBoolean("prime", false) ? "primed" : "normal");
+        prime = "primed".equals(pmode);
         speedLbl.setText(speedLabel(speed));
         loadSubs();
         video.setVideoURI(videoUri(file));
@@ -379,6 +382,7 @@ public final class Player extends Activity {
             }
             Subs.Cue c = main.get(pos);
             boolean cur = pos == curLine;
+            boolean masked = pos >= lastLine && !modeShows(pos);
             boolean primed = cur && prime && pos == primeLine && ("read".equals(primePhase) || "listen".equals(primePhase));
             row.setBackground(cur ? Ui.round(Ui.mix(Ui.CARD, Ui.ACCENT, 0.22f), Ui.dp(Player.this, Ui.RS)) : null);
             time.setText((Marks.isMarked(file.getName(), c.start) ? "★ " : "") + Ui.time(c.start));
@@ -387,7 +391,12 @@ public final class Player extends Activity {
             tx.setTextColor(cur ? Ui.TEXT : Ui.mix(Ui.BG, Ui.TEXT, 0.75f));
             tr.setTextSize(Math.max(12, listSp - 3));
             String t = trFor(c);
-            if (primed) {                                       // primed listening: the translation to read, the sound alone, then the text
+            if (masked && !primed) {
+                tx.setText("· · ·");
+                tr.setText(trFor(c));
+                tr.setVisibility(trFor(c).isEmpty() || hideTr || prime ? View.GONE : View.VISIBLE);
+                tx.setVisibility(View.VISIBLE);
+            } else if (primed) {                                       // primed listening: the translation to read, the sound alone, then the text
                 tx.setText("· · ·");
                 tr.setText(t);
                 tr.setVisibility("read".equals(primePhase) && !t.isEmpty() ? View.VISIBLE : View.GONE);
@@ -427,22 +436,87 @@ public final class Player extends Activity {
     /** Does primed listening stop at this line? (Settings: every line, or only lines with an unknown word.) */
     private boolean primes(int i) {
         if (!"unk".equals(app.prefs().getString("prime_when", "all"))) return true;
-        Boolean q = qual.get(i);
-        return q != null && q;
+        Integer q = unkN.get(i);
+        return q != null && q > 0;
     }
 
-    /** Works out, off the screen's thread, which of the next lines have an unknown word (the dictionary is on disk). */
+    /** Does the mode need to know how many unknown words the lines have? */
+    private boolean needsCounts() {
+        return "i1".equals(pmode) || "pi1".equals(pmode) || "punk".equals(pmode) || (prime && "unk".equals(app.prefs().getString("prime_when", "all")));
+    }
+
+    /** Works out, off the screen's thread, how many unknown words the next lines have (the dictionary is on disk). */
     private void qualify(int from) {
-        if (!prime || !"unk".equals(app.prefs().getString("prime_when", "all"))) return;
+        if (!needsCounts()) return;
+        boolean missing = false;
+        for (int k = Math.max(0, from); k < Math.min(main.size(), Math.max(0, from) + 6); k++) if (!unkN.containsKey(k)) missing = true;
+        if (!missing) return;
+        final int f = Math.max(0, from);
         app.bg(() -> {
-            for (int k = Math.max(0, from); k < Math.min(main.size(), from + 4); k++) {
-                if (qual.containsKey(k)) continue;
-                boolean unk = false;
+            boolean got = false;
+            for (int k = f; k < Math.min(main.size(), f + 6); k++) {
+                if (unkN.containsKey(k)) continue;
+                int n = 0;
                 String text = main.get(k).text;
-                for (int[] w : Subs.words(text)) if (col.state(text.substring(w[0], w[1])).equals("u")) { unk = true; break; }
-                qual.put(k, unk);
+                for (int[] w : Subs.words(text)) if (w[1] - w[0] > 1 && col.state(text.substring(w[0], w[1])).equals("u")) n++;
+                unkN.put(k, n);
+                got = true;
             }
+            if (got) app.post(() -> { if (!isFinishing()) { shown = -2; if (stacked) adapter.notifyDataSetChanged(); } });
         });
+    }
+
+    /** May the text of this line be seen now, in the mode that is on? */
+    private boolean modeShows(int i) {
+        switch (pmode) {
+            case "hidden": return false;
+            case "paused": return video != null && !video.isPlaying();
+            case "i1": { Integer n = unkN.get(i); return n != null && n == 1; }
+            default: return true;
+        }
+    }
+
+    private static final String[] MODE_KEYS = {"normal", "primed", "hidden", "paused", "i1", "pi1", "punk"};
+    private static final String[] MODE_NAMES = {"Normal", "Primed listening", "Hidden subtitles", "Subtitles only while paused", "Subtitles only on i+1 lines", "Stop at i+1 lines", "Stop at lines with new words"};
+    private static final String[] MODE_HINTS = {"The subtitles as the video goes", "The translation first, then the sound alone, then the text", "No subtitle text; tap a line in the list or pause to look",
+            "The text shows when the video is paused", "Only lines with exactly one word you don't know show their text", "Stops at the end of a line with exactly one new word", "Stops at the end of every line with a word you don't know"};
+
+    private String modeName() { for (int i = 0; i < MODE_KEYS.length; i++) if (MODE_KEYS[i].equals(pmode)) return MODE_NAMES[i]; return MODE_NAMES[0]; }
+
+    private void setMode(String m) {
+        pmode = m;
+        prime = "primed".equals(m);
+        app.prefs().edit().putString("pmode", m).putBoolean("prime", prime).apply();
+        primeLine = -1; primePhase = ""; pausedAt = -2; shown = -2;
+        if (needsCounts()) qualify(Math.max(0, lastLine));
+        if (adapter != null) adapter.notifyDataSetChanged();
+        Ui.toast(this, modeName());
+    }
+
+    /** The mode picker: each with a line saying what it does. */
+    private void modeMenu() {
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 6), 0, Ui.dp(this, 6), Ui.dp(this, 12));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        for (int i = 0; i < MODE_KEYS.length; i++) {
+            final String k = MODE_KEYS[i];
+            LinearLayout r = Ui.row(this);
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 10));
+            r.setBackground(Ui.press(0x00000000, 0x00000000, Ui.dp(this, Ui.RS)));
+            TextView ck = Ui.text(this, k.equals(pmode) ? "✓" : "", 15, Ui.ACCENT);
+            ck.setMinWidth(Ui.dp(this, 24));
+            r.addView(ck);
+            LinearLayout c = Ui.col(this);
+            TextView t = Ui.text(this, MODE_NAMES[i], 16, Ui.TEXT);
+            if (k.equals(pmode)) t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            c.addView(t);
+            c.addView(Ui.text(this, MODE_HINTS[i], 12, Ui.DIM));
+            r.addView(c, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            r.setOnClickListener(v -> { Ui.dismiss(d[0]); setMode(k); });
+            l.addView(r);
+        }
+        d[0] = Ui.sheet(this, "How to use the lines", Ui.scroll(this, l), true);
     }
 
     /** Time to read a translation before the line plays: by its length, 1.5 to 8 s. */
@@ -463,7 +537,7 @@ public final class Player extends Activity {
             case "speed": speedMenu(); break;
             case "menu": mainMenu(); break;
             case "quick": quick(); break;
-            case "autopause": setAutoPause(!autoPause, true); break;
+            case "mode": modeMenu(); break;
             case "delay": delayDialog(); break;
             case "mark": {                                         // ★ the line on screen: it comes back in Home → Review
                 int i = Subs.around(main, t - delay);
@@ -537,21 +611,9 @@ public final class Player extends Activity {
 
     /** What is switched on, shown at the top like the PC's pill: "🎧 primed · stops at lines · repeat 3". */
     private void statusUpdate() {
-        String t = (prime ? "primed" : "") + (autoPause ? (prime ? " · " : "") + "stops after lines" : "") + (loopUntil > 0 ? (prime || autoPause ? " · " : "") + "repeating" + (loopLeft > 0 ? " " + loopLeft : "") : "");
+        String m = "normal".equals(pmode) ? "" : modeName().toLowerCase(Locale.ROOT).replace("subtitles only on i+1 lines", "i+1 subtitles").replace("subtitles only while paused", "subs when paused");
+        String t = m + (loopUntil > 0 ? (m.isEmpty() ? "" : " · ") + "repeating" + (loopLeft > 0 ? " " + loopLeft : "") : "");
         if (!t.contentEquals(statusText.getText())) { statusText.setText(t); statusText.setVisibility(t.isEmpty() ? View.GONE : View.VISIBLE); }
-    }
-
-    private void setAutoPause(boolean on, boolean say) {
-        autoPause = on;
-        app.prefs().edit().putBoolean("autopause", on).apply();
-        pausedAt = -2;
-        if (say) Ui.toast(this, on ? "The video stops at the end of every line: press play for the next" : "Plays on");
-    }
-
-    private void setPrime(boolean on) {
-        prime = on;
-        app.prefs().edit().putBoolean("prime", on).apply();
-        primeLine = -1; primePhase = ""; shown = -2;
     }
 
     private void speedMenu() {
@@ -601,6 +663,7 @@ public final class Player extends Activity {
         android.app.Dialog[] d = new android.app.Dialog[1];
         boolean port = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT;
         l.addView(menuRow("Quick settings…", "", false, this::quick, d));
+        l.addView(menuRow("How to use the lines…", modeName(), false, this::modeMenu, d));
         l.addView(menuRow("Subtitles…", subsOf(file).size() + " file" + (subsOf(file).size() == 1 ? "" : "s"), false, this::subsDialog, d));
         l.addView(menuRow(hideSub ? "Show the subtitles" : "Hide the subtitles", "", false, () -> { hideSub = !hideSub; shown = -2; adapter.notifyDataSetChanged(); }, d));
         l.addView(menuRow(hideTr ? "Show the translation" : "Hide the translation", "", false, () -> { hideTr = !hideTr; shown = -2; adapter.notifyDataSetChanged(); }, d));
@@ -641,8 +704,14 @@ public final class Player extends Activity {
         l.addView(Ui.section(this, "Playback"));
         LinearLayout g2 = Ui.group(this);
         Ui.pickRow(g2, "Speed", speedLabel(speed), v -> { Ui.dismiss(d[0]); speedMenu(); });
-        Ui.switchRow(g2, "Stop after every line", "Press play for the next line.", autoPause, (b, on) -> setAutoPause(on, false));
-        Ui.switchRow(g2, "Primed listening", "The translation first, then the sound alone, then the text.", prime, (b, on) -> setPrime(on));
+        Ui.pickRow(g2, "Mode", modeName(), v -> { Ui.dismiss(d[0]); modeMenu(); });
+        if (prime) {
+            boolean unkOnly = "unk".equals(app.prefs().getString("prime_when", "all"));
+            Ui.switchRow(g2, "Primed only on lines with a new word", "Off: every line is primed.", unkOnly, (b, on) -> {
+                app.prefs().edit().putString("prime_when", on ? "unk" : "all").apply();
+                if (on) qualify(Math.max(0, lastLine));
+            });
+        }
         int times = app.prefs().getInt("loop_times", 1);
         String[] tn = {"1 time", "2 times", "3 times", "5 times", "until I go on"};
         int[] tv = {1, 2, 3, 5, 0};
@@ -815,7 +884,13 @@ public final class Player extends Activity {
             int i = Subs.at(main, t - delay);
             if (prime && loopUntil < 0) primeStep(i, t);
             if (i != shown) { shown = i; showLine(i); }
-            if (autoPause && i >= 0 && i != pausedAt && t - delay >= main.get(i).end - 0.08 && video.isPlaying()) { pausedAt = i; video.pause(); }
+            if (needsCounts()) qualify(Math.max(0, i));
+            if (("pi1".equals(pmode) || "punk".equals(pmode)) && i >= 0 && i != pausedAt && t - delay >= main.get(i).end - 0.08 && video.isPlaying()) {
+                Integer n = unkN.get(i);
+                if (n != null && ("punk".equals(pmode) ? n > 0 : n == 1)) { pausedAt = i; video.pause(); }
+            }
+            boolean pl = video.isPlaying();
+            if (pl != wasPlaying) { wasPlaying = pl; if ("paused".equals(pmode)) { shown = -2; if (stacked) adapter.notifyDataSetChanged(); } }
             if (i >= 0 && i != pausedAt && t - delay < main.get(i).end - 0.3) pausedAt = -2;
         } catch (RuntimeException e) {
             if (!tickFailed) { tickFailed = true; app.report("Player: showing a line", e); Ui.toast(this, "Something went wrong: " + e); }
@@ -824,6 +899,7 @@ public final class Player extends Activity {
     }
 
     private void showLine(int i) {
+        if (i >= 0) lastLine = i;
         if (stacked) {
             if (i >= 0) markIcon(Marks.isMarked(file.getName(), main.get(i).start));
             followLine(i);
@@ -831,7 +907,8 @@ public final class Player extends Activity {
         }
         if (i < 0) { subText.setVisibility(View.GONE); trText.setVisibility(View.GONE); return; }
         Subs.Cue c = main.get(i);
-        if (hideSub) { subText.setVisibility(View.GONE); }
+        boolean modeHides = hideSub || !modeShows(i);
+        if (modeHides) { subText.setVisibility(View.GONE); }
         markIcon(Marks.isMarked(file.getName(), c.start));
         if (prime && i == primeLine && ("read".equals(primePhase) || "listen".equals(primePhase))) {
             subText.setVisibility(View.GONE);                              // no text while it is primed: the translation to read, then the sound alone
@@ -843,7 +920,7 @@ public final class Player extends Activity {
         final String text = c.text;
         app.bg(() -> {
             CharSequence s = col.spans(text, (word, start, end, tx) -> tapped(word, start, tx, c));
-            app.post(() -> { if (shown == i && !hideSub) { subText.setText(s); subText.setVisibility(View.VISIBLE); } });
+            app.post(() -> { if (shown == i && !hideSub && modeShows(i)) { subText.setText(s); subText.setVisibility(View.VISIBLE); } });
         });
         StringBuilder tr = new StringBuilder();
         for (Subs.Cue x : second) if (x.start < c.end && x.end > c.start) { if (tr.length() > 0) tr.append('\n'); tr.append(x.text); }
