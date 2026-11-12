@@ -37,7 +37,7 @@ import java.util.Map;
 
 /** The main screen: Home (continue, shelves), Books, Videos, Words and Settings, with the language and the sync button on top. */
 public final class MainActivity extends Activity {
-    static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3, REQ_PHOTO = 4;
+    static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3, REQ_PHOTO = 4, REQ_VFOLDER = 5, REQ_BFOLDER = 6;
     private App app;
     private FrameLayout body;
     private TextView langBtn, status;
@@ -46,7 +46,7 @@ public final class MainActivity extends Activity {
     private final List<View> tabs = new ArrayList<>();
     private android.widget.ImageView gear;
     private String before = "home";
-    private String openShow, openBookId;                       // a series page / a book page is open inside its tab                             // the tab to go back to from Settings
+    private String openShow, openBookId, openList, tagFilter = "", bookTagFilter = "";                       // a series page / a book page is open inside its tab                             // the tab to go back to from Settings
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -210,6 +210,7 @@ public final class MainActivity extends Activity {
         int n = ws.unsentCount();
         status.setText(ws.knownCount() + " known words" + (ws.pulledAt() == 0 ? " · not synced with the PC yet" : "") + (n > 0 ? " · " + n + " change(s) to send" : ""));
         body.removeAllViews();
+        queueSrc = null;
         View v;
         switch (tab) {
             case "videos": v = videos(); break;
@@ -283,6 +284,7 @@ public final class MainActivity extends Activity {
                     String id = f.getName().replaceAll("\\.json$", ""), own = sp.getString("btitle_" + id, "");
                     if (!own.isEmpty()) bt.put(id.substring(2), own);
                 }
+                ex.put("meta", Details.toPush());
                 ex.put("video_done", done);
                 ex.put("marks", mk);
                 ex.put("book_titles", bt);
@@ -320,6 +322,8 @@ public final class MainActivity extends Activity {
                     } catch (IOException | RuntimeException ignored) { }
                 }
                 Map<String, Object> ex = Json.obj(pulled.get("extra"));
+                Details.take(Json.arr(ex.get("meta")), System.currentTimeMillis());
+                Details.pushed();
                 Map<String, Object> hm = Json.obj(ex.get("home"));
                 if (!hm.isEmpty()) {
                     Map<String, Object> gl = Json.obj(hm.get("goal"));
@@ -778,7 +782,21 @@ public final class MainActivity extends Activity {
         return b.length() == 0 ? "?" : b.toString();
     }
 
-    private void openVideo(File f) { Intent i = new Intent(this, Player.class); i.putExtra("path", f.getPath()); startActivity(i); }
+    private List<File> queueSrc;                           // the list a video was chosen from (a series, a playlist): the ones after it play next
+
+    private void openVideo(File f) {
+        Intent i = new Intent(this, Player.class);
+        i.putExtra("path", f.getPath());
+        if (queueSrc != null && app.prefs().getBoolean("autonext", true)) {
+            int k = queueSrc.indexOf(f);
+            if (k >= 0 && k + 1 < queueSrc.size()) {
+                String[] q = new String[queueSrc.size() - k - 1];
+                for (int j = 0; j < q.length; j++) q[j] = queueSrc.get(k + 1 + j).getPath();
+                i.putExtra("queue", q);
+            }
+        }
+        startActivity(i);
+    }
     private void openBook(BookInfo bk) { Intent i = new Intent(this, Reader.class); i.putExtra("id", bk.id); startActivity(i); }
 
     // ================================================================ books
@@ -791,6 +809,7 @@ public final class MainActivity extends Activity {
         acts.addView(Ui.weight(Ui.primary(this, "Add a book", v -> pick(REQ_BOOK, new String[]{"application/epub+zip", "text/plain"}, false)), 1));
         acts.addView(Ui.weight(Ui.button(this, "From the PC", v -> pcBooks()), 1));
         Ui.add(l, acts, 8);
+        Ui.add(l, Ui.button(this, "📁  Add a folder of books", v -> foldersMenu("book")), 8);
         Ui.add(l, Ui.button(this, "📷  Photo of a page (the PC reads it)", v -> {
             if (app.pc() == null) { Ui.toast(this, "Link the PC first (Settings)"); return; }
             Intent i = new Intent(Intent.ACTION_GET_CONTENT);
@@ -800,11 +819,23 @@ public final class MainActivity extends Activity {
         }), 8);
         String lang = app.lang();
         List<BookInfo> books = bookList(lang);
-        if (books.isEmpty()) l.addView(Ui.hint(this, "No " + lang.toUpperCase(Locale.ROOT) + " books yet. Add an EPUB or text file from the phone, or copy a book from the Reader on the PC."));
+        if (books.isEmpty()) l.addView(Ui.hint(this, "No " + lang.toUpperCase(Locale.ROOT) + " books yet. Add an EPUB or text file (or a whole folder of them) from the phone, or copy a book from the Reader on the PC."));
+        else {
+            List<String> bkeys = new ArrayList<>();
+            for (BookInfo bk : books) bkeys.add(Details.bookKey(bk.id));
+            List<String> used = Details.tagsUsed(bkeys);
+            if (!bookTagFilter.isEmpty() && !used.contains(bookTagFilter)) bookTagFilter = "";
+            if (!used.isEmpty()) l.addView(Details.filterBar(this, used, bookTagFilter, t -> { bookTagFilter = t; show(); }));
+        }
         for (BookInfo bk : books) {
+            if (!bookTagFilter.isEmpty() && !Details.hasTag(Details.bookKey(bk.id), bookTagFilter)) continue;
             int[] pos = Reader.position(bk.id);
             String sub = bk.chapters + " chapters" + (pos[0] > 0 || pos[1] > 0 ? " · at chapter " + (pos[0] + 1) : "");
-            LinearLayout it = Ui.item(this, bk.title, sub, v -> { openBookId = bk.id; show(); });
+            Map<String, Object> det = Details.get(Details.bookKey(bk.id));
+            String by = com.batchmine.pocket.core.Meta.line(det);
+            LinearLayout it = Ui.item(this, bk.title, by.isEmpty() ? sub : by + " · " + sub, v -> { openBookId = bk.id; show(); });
+            String tl = Details.tagLine(Details.bookKey(bk.id));
+            if (!tl.isEmpty()) { TextView tg = Ui.text(this, tl, 12, Ui.ACCENT); tg.setPadding(0, Ui.dp(this, 3), 0, 0); it.addView(tg); }
             float frac = app.prefs().getFloat("rf_" + bk.id, 0);
             if (frac > 0.005f) { View pr = Ui.progress(this, frac); ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8); it.addView(pr); }
             it.setOnLongClickListener(v -> { bookMenu(bk); return true; });
@@ -860,6 +891,7 @@ public final class MainActivity extends Activity {
         if (bk.id.startsWith("pc")) tx.addView(Ui.hint(this, "From the Reader on the PC: your place is kept in step."));
         top.addView(tx, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         hero.addView(top);
+        hero.addView(Details.block(this, Details.bookKey(bk.id), "book", bk.title, bk.chapters + " chapters", this::show));
         Ui.add(l, hero, 12);
         Ui.add(l, Ui.primary(this, frac > 0.005f ? "Continue · chapter " + (pos[0] + 1) : "Start reading", v -> openBook(bk)), 8);
         Ui.add(l, Ui.buttons(this, Ui.button(this, "Contents", v -> bookContents(bk)), Ui.button(this, "Rename", v -> renameBook(bk)),
@@ -950,6 +982,7 @@ public final class MainActivity extends Activity {
 
     // ================================================================ videos
     private View videos() {
+        if (openList != null) { View v = playlistPage(openList); if (v != null) return v; openList = null; }
         if (openShow != null) { View v = showPage(openShow); if (v != null) return v; openShow = null; }
         LinearLayout l = Ui.col(this);
         l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 12));
@@ -957,18 +990,35 @@ public final class MainActivity extends Activity {
         acts.addView(Ui.weight(Ui.primary(this, "Add a video", v -> pick(REQ_VIDEO, new String[]{"video/*", "application/x-subrip", "text/vtt", "text/x-ssa", "application/octet-stream", "text/*"}, true)), 1));
         acts.addView(Ui.weight(Ui.button(this, "From the PC", v -> pcVideos()), 1));
         Ui.add(l, acts, 8);
+        LinearLayout acts2 = Ui.row(this);
+        acts2.addView(Ui.weight(Ui.button(this, "📁  Add a folder", v -> foldersMenu("video")), 1));
+        acts2.addView(Ui.weight(Ui.button(this, "☰  New playlist", v -> newPlaylist(null, null)), 1));
+        Ui.add(l, acts2, 8);
         File[] fs = myVideos();
         if (fs == null || fs.length == 0) {
             l.addView(Ui.hint(this, "No videos yet. “Add a video” takes a video from the phone together with its subtitle files (.srt / .vtt / .ass): choose them all in one go. “From the PC” copies an episode and its subtitles over Wi-Fi."));
         } else {
             Map<String, List<File>> groups = showGroups(fs);
             List<File> singles = new ArrayList<>();
-            for (File f : fs) { Shows.Ep e = Shows.of(Player.videoName(f)); if (e.show.isEmpty() || !groups.containsKey(Shows.key(e.show))) singles.add(f); }
+            for (File f : fs) { Shows.Ep e = Player.epOf(f); if (e.show.isEmpty() || !groups.containsKey(Shows.key(e.show))) singles.add(f); }
             Arrays.sort(fs);
             android.content.SharedPreferences sp = app.prefs();
             List<String> keys = new ArrayList<>(groups.keySet());
             keys.sort((x, y) -> Long.compare(lastTouched(groups.get(y)), lastTouched(groups.get(x))));
-            if (!keys.isEmpty()) l.addView(Ui.title(this, "Series"));
+            List<Lists.PL> pls = Lists.all();
+            if (!pls.isEmpty()) {
+                l.addView(Ui.title(this, "Playlists"));
+                for (Lists.PL pl : pls) Ui.add(l, playlistCard(pl), 8);
+            }
+            if (!keys.isEmpty()) {
+                l.addView(Ui.title(this, "Series"));
+                List<String> sk = new ArrayList<>();
+                for (String k : keys) sk.add("pseries:" + k);
+                List<String> used = Details.tagsUsed(sk);
+                if (!tagFilter.isEmpty() && !used.contains(tagFilter)) tagFilter = "";
+                if (!used.isEmpty()) l.addView(Details.filterBar(this, used, tagFilter, t -> { tagFilter = t; show(); }));
+                if (!tagFilter.isEmpty()) keys.removeIf(k -> !Details.hasTag("pseries:" + k, tagFilter));
+            }
             for (String k : keys) Ui.add(l, showCard(k, groups.get(k)), 8);
             if (!singles.isEmpty()) l.addView(Ui.title(this, keys.isEmpty() ? "Videos" : "Single videos"));
             for (File f : singles) Ui.add(l, videoItem(f, false), 8);
@@ -980,12 +1030,12 @@ public final class MainActivity extends Activity {
     private Map<String, List<File>> showGroups(File[] fs) {
         Map<String, List<File>> m = new java.util.LinkedHashMap<>();
         for (File f : fs) {
-            Shows.Ep e = Shows.of(Player.videoName(f));
+            Shows.Ep e = Player.epOf(f);
             if (!e.show.isEmpty()) m.computeIfAbsent(Shows.key(e.show), k -> new ArrayList<>()).add(f);
         }
         m.values().removeIf(x -> x.size() < 2);
         for (List<File> x : m.values()) x.sort((p, q) -> {
-            Shows.Ep a = Shows.of(Player.videoName(p)), b = Shows.of(Player.videoName(q));
+            Shows.Ep a = Player.epOf(p), b = Player.epOf(q);
             return a.order() != b.order() ? Long.compare(a.order(), b.order()) : p.getName().compareToIgnoreCase(q.getName());
         });
         return m;
@@ -1044,7 +1094,7 @@ public final class MainActivity extends Activity {
     private void findSubs(File f) {
         PcLink pc = app.pc();
         if (pc == null) { Ui.toast(this, "Paste the PC link in Settings first: the PC searches for the phone"); return; }
-        Shows.Ep e = Shows.of(Player.videoName(f));
+        Shows.Ep e = Player.epOf(f);
         String name = vtitle(f);
         String lang = vlang(f).isEmpty() ? app.lang() : vlang(f);
         if (lang.equals("en") && !app.lang().equals("en")) lang = app.lang();
@@ -1107,12 +1157,12 @@ public final class MainActivity extends Activity {
 
     /** What to call a video: the series name for an episode, a cleaned-up name for a film. */
     private String vtitle(File f) {
-        Shows.Ep e = Shows.of(Player.videoName(f));
+        Shows.Ep e = Player.epOf(f);
         return !e.show.isEmpty() ? e.show : Shows.pretty(Player.videoName(f));
     }
 
     /** "Season 1 · Episode 3" for an episode, else "". */
-    private String vepisode(File f) { return Shows.of(Player.videoName(f)).longLabel(); }
+    private String vepisode(File f) { return Player.epOf(f).longLabel(); }
 
     /** Subtitle languages as tags: "DE · EN", or "no subtitles". */
     private String subTags(File f) {
@@ -1130,9 +1180,11 @@ public final class MainActivity extends Activity {
         int done = 0;
         for (File f : eps) if (watched(f)) done++;
         File nx = nextEpisode(eps);
-        Shows.Ep ne = Shows.of(Player.videoName(nx));
+        Shows.Ep ne = Player.epOf(nx);
         String sub = eps.size() + " episodes · " + done + " watched" + (done < eps.size() ? " · next: " + ne.label() : " · all watched");
+        String tl = Details.tagLine("pseries:" + key);
         LinearLayout it = Ui.item(this, showName(eps), sub, v -> { openShow = key; show(); });
+        if (!tl.isEmpty()) { TextView tg = Ui.text(this, tl, 12, Ui.ACCENT); tg.setPadding(0, Ui.dp(this, 3), 0, 0); it.addView(tg); }
         View pr = Ui.progress(this, done / (float) eps.size());
         ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8);
         it.addView(pr);
@@ -1160,13 +1212,124 @@ public final class MainActivity extends Activity {
         st.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 8));
         hero.addView(st);
         hero.addView(Ui.progress(this, done / (float) eps.size()));
+        StringBuilder hn = new StringBuilder(eps.size() + " video files, e.g. ");
+        for (int i = 0; i < Math.min(3, eps.size()); i++) hn.append(i > 0 ? "; " : "").append(Player.videoName(eps.get(i)));
+        hero.addView(Details.block(this, "pseries:" + key, "series", showName(eps), hn.toString(), this::show));
         Ui.add(l, hero, 12);
+        queueSrc = eps;
         File nx = nextEpisode(eps);
         float at = app.prefs().getFloat("vpos_" + nx.getName(), 0);
-        String what = Shows.of(Player.videoName(nx)).label();
+        String what = Player.epOf(nx).label();
         Ui.add(l, Ui.primary(this, done == eps.size() ? "Watch again · " + what : (at > 5 && !watched(nx) ? "Continue · " + what + " at " + Ui.time(at) : "Play · " + what), v -> openVideo(nx)), 12);
+        Ui.add(l, Ui.button(this, "☰  Save these episodes as a playlist", v -> { List<String> nm = new ArrayList<>(); for (File f : eps) nm.add(f.getName()); newPlaylist(nm, showName(eps)); }), 12);
         for (File f : eps) Ui.add(l, videoItem(f, true), 8);
         return Ui.scroll(this, l);
+    }
+
+    // ---- playlists
+    private File videoByName(String n) { File f = new File(app.videoDir(), n); return f.isFile() ? f : null; }
+
+    private List<File> playlistFiles(Lists.PL pl) {
+        List<File> out = new ArrayList<>();
+        for (String n : pl.items) { File f = videoByName(n); if (f != null) out.add(f); }
+        return out;
+    }
+
+    private View playlistCard(Lists.PL pl) {
+        List<File> fs = playlistFiles(pl);
+        int done = 0;
+        for (File f : fs) if (watched(f)) done++;
+        LinearLayout it = Ui.item(this, "☰  " + pl.name, fs.size() + " videos · " + done + " watched", v -> { openList = pl.id; show(); });
+        if (!fs.isEmpty()) { View pr = Ui.progress(this, done / (float) fs.size()); ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8); it.addView(pr); }
+        it.setOnLongClickListener(v -> { playlistMenu(pl); return true; });
+        if (fs.isEmpty()) return it;
+        View t = Thumbs.tile(this, nextEpisode(fs), pl.name, 0f);
+        t.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 104), Ui.dp(this, 58)));
+        return withPicture(it, t);
+    }
+
+    private View playlistPage(String id) {
+        Lists.PL pl = Lists.get(id);
+        if (pl == null) return null;
+        List<File> fs = playlistFiles(pl);
+        LinearLayout l = Ui.col(this);
+        int pad = Ui.dp(this, 12);
+        l.setPadding(pad, 0, pad, pad * 2);
+        l.addView(backRow("Videos", () -> { openList = null; show(); }));
+        int done0 = 0;
+        for (File f : fs) if (watched(f)) done0++;
+        final int done = done0;
+        LinearLayout hero = Ui.card(this);
+        TextView tt = Ui.text(this, pl.name, 20, Ui.TEXT);
+        tt.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        hero.addView(tt);
+        TextView st = Ui.text(this, fs.size() + " videos · " + done + " watched" + (fs.size() < pl.items.size() ? " · " + (pl.items.size() - fs.size()) + " not on the phone any more" : ""), 13, Ui.DIM);
+        st.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 8));
+        hero.addView(st);
+        if (!fs.isEmpty()) hero.addView(Ui.progress(this, done / (float) fs.size()));
+        Ui.add(l, hero, 12);
+        queueSrc = fs;
+        if (fs.isEmpty()) { l.addView(Ui.hint(this, "Nothing in this playlist yet: long-press a video → Add to a playlist.")); }
+        else {
+            File nx = nextEpisode(fs);
+            Ui.add(l, Ui.primary(this, done == fs.size() ? "Play again from the start" : "Play · " + vtitle(nx), v -> openVideo(done == fs.size() ? fs.get(0) : nx)), 12);
+        }
+        Ui.add(l, Ui.buttons(this, Ui.button(this, "Edit the list", v -> editPlaylist(pl)), Ui.button(this, "Rename", v -> askName("Rename the playlist", pl.name, nm -> { pl.name = nm; Lists.update(pl); show(); })),
+                Ui.button(this, "Delete", v -> playlistMenu(pl))), 12);
+        for (File f : fs) Ui.add(l, videoItem(f, false), 8);
+        return Ui.scroll(this, l);
+    }
+
+    private void playlistMenu(Lists.PL pl) {
+        Ui.dialog(this).setTitle("Delete the playlist “" + pl.name + "”?").setMessage("Only the list: the videos stay.")
+                .setPositiveButton("Delete", (d, i) -> { Lists.delete(pl.id); openList = null; show(); }).setNegativeButton("Keep", null).show();
+    }
+
+    /** The order of a playlist: tap a video to move it up or down or take it out. */
+    private void editPlaylist(Lists.PL pl) {
+        List<String> names = new ArrayList<>();
+        for (String n : pl.items) { File f = videoByName(n); names.add(f == null ? "(gone) " + n : vtitle(f) + (vepisode(f).isEmpty() ? "" : " · " + vepisode(f))); }
+        if (names.isEmpty()) return;
+        Ui.choose(this, "Tap a video to move it", names.toArray(new String[0]), -1, i -> Ui.choose(this, names.get(i), new String[]{"Move up", "Move down", "Take out of the list"}, -1, w -> {
+            if (w == 0 && i > 0) java.util.Collections.swap(pl.items, i, i - 1);
+            else if (w == 1 && i + 1 < pl.items.size()) java.util.Collections.swap(pl.items, i, i + 1);
+            else if (w == 2) pl.items.remove(i);
+            Lists.update(pl);
+            show();
+            editPlaylist(pl);
+        }));
+    }
+
+    private void askName(String title, String value, java.util.function.Consumer<String> then) {
+        android.widget.EditText in = Ui.input(this, value, "Name");
+        in.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        LinearLayout box = Ui.col(this);
+        box.setPadding(Ui.dp(this, 16), 0, Ui.dp(this, 16), Ui.dp(this, 16));
+        box.addView(in);
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        Ui.add(box, Ui.buttons(this, Ui.flat(this, "Cancel", v -> Ui.dismiss(d[0])), Ui.primary(this, "OK", v -> {
+            String t = in.getText().toString().trim();
+            if (t.isEmpty()) return;
+            Ui.dismiss(d[0]);
+            then.accept(t);
+        })), 12);
+        d[0] = Ui.sheet(this, title, box, false);
+    }
+
+    /** A new playlist with these videos (file names), asking for its name. */
+    private void newPlaylist(List<String> items, String suggested) {
+        askName("New playlist", suggested == null ? "" : suggested, nm -> { Lists.PL p = Lists.create(nm, items == null ? new ArrayList<>() : items); Ui.toast(this, "Playlist “" + p.name + "” made"); openList = p.id; tab = "videos"; show(); });
+    }
+
+    private void addToPlaylist(File f) {
+        List<Lists.PL> ps = Lists.all();
+        String[] items = new String[ps.size() + 1];
+        for (int i = 0; i < ps.size(); i++) items[i] = ps.get(i).name;
+        items[ps.size()] = "New playlist…";
+        Ui.choose(this, "Add to a playlist", items, -1, i -> {
+            if (i == ps.size()) newPlaylist(new ArrayList<>(java.util.Collections.singletonList(f.getName())), vtitle(f));
+            else { Lists.add(ps.get(i).id, f.getName()); Ui.toast(this, "Added to “" + ps.get(i).name + "”"); }
+        });
     }
 
     /** One video in a list. IN_SHOW: the episode number leads and watched ones are ticked. */
@@ -1176,7 +1339,7 @@ public final class MainActivity extends Activity {
         boolean linked = f.getName().endsWith(".vlink");
         long fsize = linked ? linkSize(f) : f.length();
         boolean done = watched(f);
-        Shows.Ep e = Shows.of(Player.videoName(f));
+        Shows.Ep e = Player.epOf(f);
         String head = inShow ? (done ? "✓  " : "") + (e.episode >= 0 ? e.longLabel() : vtitle(f)) : vtitle(f);
         List<String> bits = new ArrayList<>();
         if (!inShow && e.episode >= 0) bits.add(e.longLabel());
@@ -1188,10 +1351,11 @@ public final class MainActivity extends Activity {
         String sub = android.text.TextUtils.join(" · ", bits);
         LinearLayout it = Ui.item(this, head, sub, v -> openVideo(f));
         it.setOnLongClickListener(v -> {
-            String[] acts = {done ? "Mark as not watched" : "Mark as watched", linked ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles", "Set language (now: " + (vlang(f).isEmpty() ? "not set" : vlang(f)) + ")", "Find subtitles on the internet (through the PC)"};
+            String[] acts = {done ? "Mark as not watched" : "Mark as watched", linked ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles", "Set language (now: " + (vlang(f).isEmpty() ? "not set" : vlang(f)) + ")", "Find subtitles on the internet (through the PC)", "Add to a playlist…"};
             Ui.choose(this, vtitle(f), acts, -1, w -> {
                 if (w == 2) { pickVideoLang(f); return; }
                 if (w == 3) { findSubs(f); return; }
+                if (w == 4) { addToPlaylist(f); return; }
                 if (w == 0) {
                     android.content.SharedPreferences.Editor ed = app.prefs().edit().putBoolean("vdone_" + f.getName(), !done).putLong("vpost_" + f.getName(), System.currentTimeMillis());
                     if (done) ed.putFloat("vpos_" + f.getName(), 0);
@@ -1409,39 +1573,11 @@ public final class MainActivity extends Activity {
         l.addView(Ui.section(this, "Look"));
         g = Ui.group(this);
         String cur = app.prefs().getString("theme", "pc");
-        Ui.pickRow(g, "Theme", "pc".equals(cur) ? "Same as the PC" : Ui.themeName(cur), v -> {
-            String[] names = new String[Ui.THEMES.length + 1];
-            names[0] = "Same as on the PC";
-            for (int i = 0; i < Ui.THEMES.length; i++) names[i + 1] = Ui.THEMES[i][1];
-            Ui.choose(this, "Theme", names, -1, i -> {
-                app.prefs().edit().putString("theme", i == 0 ? "pc" : Ui.THEMES[i - 1][0]).apply();
-                Ui.load(this);
-                recreate();
-            });
-        });
+        Ui.pickRow(g, "Theme", "pc".equals(cur) ? "Same as the PC" : Ui.themeName(cur), v -> Pickers.theme(this, this::recreate));
         String acc = app.prefs().getString("accent", "");
-        Ui.pickRow(g, "Accent colour", acc.isEmpty() ? "The theme's own" : Ui.accentName(acc), v -> {
-            String[] names = new String[Ui.ACCENTS.length];
-            for (int i = 0; i < names.length; i++) names[i] = Ui.ACCENTS[i][0];
-            Ui.choose(this, "Accent colour", names, -1, i -> {
-                app.prefs().edit().putString("accent", Ui.ACCENTS[i][1]).apply();
-                Ui.load(this);
-                recreate();
-            });
-        });
+        Ui.pickRow(g, "Accent colour", acc.isEmpty() ? "The theme's own" : Ui.accentName(acc), v -> Pickers.accent(this, this::recreate));
         String ic = app.prefs().getString("icon", "original");
-        Ui.pickRow(g, "App icon", "pc".equals(ic) ? "Same as the PC" : Icons.name(ic), v -> {
-            String[] names = new String[Icons.ALL.length + 1];
-            names[0] = "Same as on the PC";
-            for (int i = 0; i < Icons.ALL.length; i++) names[i + 1] = Icons.ALL[i][1];
-            Ui.choose(this, "App icon", names, -1, i -> {
-                String id = i == 0 ? "pc" : Icons.ALL[i - 1][0];
-                app.prefs().edit().putString("icon", id).apply();
-                if (i == 0) Ui.toast(this, "The icon follows the PC from the next sync");
-                else { Icons.apply(this, id); Ui.toast(this, "The launcher shows the new icon in a moment. A shortcut on the home screen may need adding again."); }
-                show();
-            });
-        });
+        Ui.pickRow(g, "App icon", "pc".equals(ic) ? "Same as the PC" : Icons.name(ic), v -> Pickers.icon(this, this::show));
         Ui.switchRow(g, "Coloured words", "Unknown, looked-up and card words coloured in videos and books, as on the PC", app.prefs().getBoolean("colours", true),
                 (b, on) -> app.prefs().edit().putBoolean("colours", on).apply());
         Ui.add(l, g, 0);
@@ -1453,10 +1589,9 @@ public final class MainActivity extends Activity {
         Ui.pickRow(g, "Stopwatch: stops after", idleName(app.prefs().getInt("sw_idle_read", 90)) + " (book)", v -> idlePick("sw_idle_read"));
         Ui.switchRow(g, "Video player held upright: video on top, lines below", "The picture sits at the top, the subtitle lines scroll underneath (the one being said is highlighted; tap a line to go there, a word for its card). Off: the picture fills the screen. Also the ⬒ button in the player.", app.prefs().getBoolean("player_stack", true),
                 (b, on) -> app.prefs().edit().putBoolean("player_stack", on).apply());
-        Ui.switchRow(g, "Primed listening", "Each line: its translation first (paused), then you hear it without text, then the text shows", app.prefs().getBoolean("prime", false),
-                (b, on) -> app.prefs().edit().putBoolean("prime", on).apply());
-        Ui.switchRow(g, "Primed listening: only lines with an unknown word", "The other lines just play", "unk".equals(app.prefs().getString("prime_when", "all")),
-                (b, on) -> app.prefs().edit().putString("prime_when", on ? "unk" : "all").apply());
+        Ui.switchRow(g, "Play the next episode by itself", "At the end of a video in a series or playlist, the next one starts.", app.prefs().getBoolean("autonext", true),
+                (b, on) -> app.prefs().edit().putBoolean("autonext", on).apply());
+        l.addView(Ui.hint(this, "Primed listening, hidden subtitles, “i+1” and the other ways to use the lines are chosen inside the player (≡ menu → How to use the lines)."));
         Ui.pickRow(g, "Repeat a line", app.prefs().getInt("loop_times", 1) == 0 ? "until you go on" : app.prefs().getInt("loop_times", 1) + "×", v -> {
             int[] n = {1, 2, 3, 5, 0};
             String[] names = {"once", "2 times", "3 times", "5 times", "until you go on"};
@@ -1558,6 +1693,139 @@ public final class MainActivity extends Activity {
     }
 
     // ================================================================ picking files
+
+    // ================================================================ folders (with subfolders)
+    private void pickFolder(int req) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        startActivityForResult(i, req);
+    }
+
+    private static String safe(String s) { return s.replaceAll("[\\\\/:*?\"<>|]", "_").replaceAll("\\s+", " ").trim(); }
+
+    /**
+     * A folder of videos and all its subfolders: every video is linked (not copied, unless "copy videos" is on), the subtitle files beside it are copied
+     * with it, and the folders give the series: Shows/Dark/Season 2/01.mkv is "Dark", season 2, episode 1 (a name that says the show itself wins).
+     */
+    private void addVideoFolder(Uri tree, boolean remember) {
+        String lang = app.lang();
+        Ui.toast(this, "Looking through the folder…");
+        app.bg(() -> {
+            Folders.Result r = Folders.walk(this, tree);
+            if (remember) Folders.remember(this, tree, "video", r.rootName);
+            java.util.Set<String> seen = Folders.seen(this, "video");
+            android.content.SharedPreferences.Editor ed = app.prefs().edit();
+            int added = 0, subs = 0, skipped = 0;
+            // the subtitle files of each folder, to find the ones that belong to a video
+            Map<String, List<Folders.Item>> subsBy = new java.util.HashMap<>();
+            for (Folders.Item it : r.files) if (Player.isSub(it.name)) subsBy.computeIfAbsent(String.join("/", it.rel), k -> new ArrayList<>()).add(it);
+            int directVideos = 0;
+            for (Folders.Item it : r.files) if (Player.isVideo(it.name) && it.rel.length == 0) directVideos++;
+            File dir = app.videoDir();
+            for (Folders.Item it : r.files) {
+                if (!Player.isVideo(it.name)) continue;
+                String id = it.uri.toString();
+                if (seen.contains(id)) { skipped++; continue; }
+                String[] sh = com.batchmine.pocket.core.Meta.folderShow(r.rootName, it.rel);
+                String stem = it.name.replaceAll("\\.[^.]+$", "");
+                String prefix = it.rel.length == 0 ? (directVideos > 1 ? safe(r.rootName) + " - " : "") : safe(String.join(" - ", it.rel)) + " - ";
+                String base = safe(prefix + stem);
+                File link = new File(dir, base + ".vlink");
+                for (int k = 2; link.exists(); k++) link = new File(dir, base + " (" + k + ").vlink");
+                try {
+                    boolean copy = app.prefs().getBoolean("copy_videos", false);
+                    if (!copy) {
+                        try { getContentResolver().takePersistableUriPermission(it.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (RuntimeException ignored) { /* the folder's permission covers it */ }
+                        java.nio.file.Files.write(link.toPath(), (it.uri.toString() + "\n" + it.name).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    } else {
+                        link = new File(dir, base + it.name.substring(it.name.lastIndexOf('.')));
+                        try (InputStream in = getContentResolver().openInputStream(it.uri); OutputStream out = new FileOutputStream(link)) { byte[] b = new byte[1 << 16]; int n; while (in != null && (n = in.read(b)) > 0) out.write(b, 0, n); }
+                    }
+                } catch (IOException | RuntimeException e) { continue; }
+                added++;
+                seen.add(id);
+                String ln = link.getName();
+                ed.putString("vlang_" + ln, lang);
+                com.batchmine.pocket.core.Shows.Ep own = com.batchmine.pocket.core.Shows.of(it.name);
+                if (own.show.isEmpty() && !sh[0].isEmpty()) ed.putString("vshow_" + ln, sh[0]);
+                int season = Integer.parseInt(sh[1]);
+                if (season > 0 && own.season <= 0) ed.putInt("vseason_" + ln, season);
+                // its subtitle files: the same folder, the same name up to the language mark
+                String linkStem = ln.replaceAll("\\.[^.]+$", "");
+                for (Folders.Item sf : subsBy.getOrDefault(String.join("/", it.rel), new ArrayList<>())) {
+                    String ss = sf.name.replaceAll("\\.[^.]+$", "");
+                    if (!(ss.equalsIgnoreCase(stem) || ss.toLowerCase(Locale.ROOT).startsWith(stem.toLowerCase(Locale.ROOT) + "."))) continue;
+                    String tag = ss.length() > stem.length() ? ss.substring(stem.length() + 1) : Player.guessLang(sf.name);
+                    String nn = linkStem + "." + (tag.isEmpty() ? "sub" : safe(tag)) + sf.name.substring(sf.name.lastIndexOf('.'));
+                    File dest = new File(dir, nn);
+                    if (dest.exists()) continue;
+                    try (InputStream in = getContentResolver().openInputStream(sf.uri); OutputStream out = new FileOutputStream(dest)) { byte[] b = new byte[1 << 14]; int n; while (in != null && (n = in.read(b)) > 0) out.write(b, 0, n); subs++; }
+                    catch (IOException | RuntimeException e) { dest.delete(); }
+                }
+            }
+            ed.apply();
+            Folders.markSeen(this, "video", seen);
+            int a = added, s2 = subs, sk = skipped;
+            boolean cut = r.cut;
+            app.post(() -> {
+                Ui.toast(this, a == 0 ? (sk > 0 ? "Nothing new in “" + r.rootName + "”" : "No videos found in “" + r.rootName + "”") : a + " video(s) added from “" + r.rootName + "”" + (s2 > 0 ? " with " + s2 + " subtitle file(s)" : "") + (cut ? " (the folder is very big: look again for the rest)" : ""));
+                show();
+            });
+        });
+    }
+
+    /** A folder of books (EPUB / text) and its subfolders: each book is read in; the subfolder it was in becomes a tag. */
+    private void addBookFolder(Uri tree, boolean remember) {
+        String lang = app.lang();
+        Ui.toast(this, "Looking through the folder…");
+        app.bg(() -> {
+            Folders.Result r = Folders.walk(this, tree);
+            if (remember) Folders.remember(this, tree, "book", r.rootName);
+            java.util.Set<String> seen = Folders.seen(this, "book");
+            int added = 0, failed = 0;
+            for (Folders.Item it : r.files) {
+                String low = it.name.toLowerCase(Locale.ROOT);
+                if (!(low.endsWith(".epub") || low.endsWith(".txt"))) continue;
+                String id0 = it.uri.toString();
+                if (seen.contains(id0)) continue;
+                try {
+                    String bid = addBookFrom(it.uri, it.name, lang);
+                    seen.add(id0);
+                    added++;
+                    if (it.rel.length > 0) {                                        // the folder it was in is a tag
+                        String key = Details.bookKey(bid);
+                        Map<String, Object> e = Details.get(key);
+                        List<String> tags = com.batchmine.pocket.core.Meta.list(e, "tags");
+                        String tg = com.batchmine.pocket.core.Meta.tag(it.rel[0]);
+                        if (!tg.isEmpty() && !tags.contains(tg)) { tags.add(tg); Map<String, Object> f = new java.util.LinkedHashMap<>(); f.put("tags", tags); com.batchmine.pocket.core.Meta.update(e, f, System.currentTimeMillis()); Details.put(key, e); }
+                    }
+                } catch (IOException | RuntimeException e) { failed++; }
+            }
+            Folders.markSeen(this, "book", seen);
+            int a = added, f2 = failed;
+            app.post(() -> { Ui.toast(this, a == 0 ? (f2 > 0 ? f2 + " book(s) could not be read" : "Nothing new in “" + r.rootName + "”") : a + " book(s) added from “" + r.rootName + "”" + (f2 > 0 ? " (" + f2 + " could not be read)" : "")); show(); });
+        });
+    }
+
+    /** Looks again through the folders you added for files that are new. */
+    private void rescanFolders(String kind) {
+        int n = 0;
+        for (String[] f : Folders.saved(this)) if (f[1].equals(kind)) { n++; Uri u = Uri.parse(f[0]); if (kind.equals("video")) addVideoFolder(u, false); else addBookFolder(u, false); }
+        if (n == 0) Ui.toast(this, "No folder added yet: “Add a folder” first");
+    }
+
+    private void foldersMenu(String kind) {
+        List<String[]> fs = new ArrayList<>();
+        for (String[] f : Folders.saved(this)) if (f[1].equals(kind)) fs.add(f);
+        List<String> items = new ArrayList<>(Arrays.asList("Add a folder…", "Look for new files in my folders"));
+        for (String[] f : fs) items.add("Stop watching “" + f[2] + "”");
+        Ui.choose(this, kind.equals("video") ? "Folders of videos" : "Folders of books", items.toArray(new String[0]), -1, i -> {
+            if (i == 0) pickFolder(kind.equals("video") ? REQ_VFOLDER : REQ_BFOLDER);
+            else if (i == 1) rescanFolders(kind);
+            else { Folders.forget(this, fs.get(i - 2)[0], kind); Ui.toast(this, "Not looked at any more (the videos or books already added stay)"); }
+        });
+    }
+
     private void pick(int req, String[] types, boolean multiple) {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
@@ -1571,6 +1839,12 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (res != RESULT_OK || data == null) return;
+        if ((req == REQ_VFOLDER || req == REQ_BFOLDER) && data.getData() != null) {
+            Uri tree = data.getData();
+            try { getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (RuntimeException ignored) { /* not persistable: works this once */ }
+            if (req == REQ_VFOLDER) addVideoFolder(tree, true); else addBookFolder(tree, true);
+            return;
+        }
         List<Uri> uris = new ArrayList<>();
         if (data.getClipData() != null) { ClipData cd = data.getClipData(); for (int i = 0; i < cd.getItemCount(); i++) uris.add(cd.getItemAt(i).getUri()); }
         else if (data.getData() != null) uris.add(data.getData());
@@ -1650,22 +1924,39 @@ public final class MainActivity extends Activity {
         String name = nameOf(u), lang = app.lang();
         Ui.toast(this, "Reading the book…");
         app.bg(() -> {
-            try (InputStream in = getContentResolver().openInputStream(u)) {
-                String stem = name.replaceAll("\\.[^.]+$", "");
-                Book bk = name.toLowerCase(Locale.ROOT).endsWith(".epub") ? Book.fromEpub(in, stem) : Book.fromText(Book.decode(readAll(in)), stem);
-                if (bk.chapters.isEmpty()) throw new IOException("no text found in the file");
-                bk.id = "ph" + Long.toString(System.currentTimeMillis(), 36);
-                if (bk.lang.isEmpty() || !bk.lang.equals(lang)) bk.lang = lang;
-                bk.write(new File(app.dir("books"), bk.id + ".json"));
-                if (name.toLowerCase(Locale.ROOT).endsWith(".epub")) {
-                    try (InputStream again = getContentResolver().openInputStream(u)) {
-                        byte[] pic = com.batchmine.pocket.core.EpubCover.extract(again);
-                        if (pic != null) try (java.io.FileOutputStream fo = new java.io.FileOutputStream(coverFile(bk.id))) { fo.write(pic); }
-                    } catch (IOException | RuntimeException ignored) { /* no cover: the lettered one is used */ }
-                }
-                app.post(() -> { Ui.toast(this, "“" + bk.title + "” added"); show(); });
+            try {
+                String id = addBookFrom(u, name, lang);
+                String title = Book.read(new File(app.dir("books"), id + ".json")).title;
+                app.post(() -> { Ui.toast(this, "“" + title + "” added"); show(); });
             } catch (IOException | RuntimeException e) { app.post(() -> Ui.alert(this, "Could not add the book", String.valueOf(e.getMessage()))); }
         });
+    }
+
+    /** Reads one EPUB or text file into the books (on a background thread); an EPUB's cover, author, year and description are kept too. Returns the book's id. */
+    private String addBookFrom(Uri u, String name, String lang) throws IOException {
+        boolean epub = name.toLowerCase(Locale.ROOT).endsWith(".epub");
+        Book bk;
+        try (InputStream in = getContentResolver().openInputStream(u)) {
+            if (in == null) throw new IOException("could not open " + name);
+            String stem = name.replaceAll("\\.[^.]+$", "");
+            bk = epub ? Book.fromEpub(in, stem) : Book.fromText(Book.decode(readAll(in)), stem);
+        }
+        if (bk.chapters.isEmpty()) throw new IOException("no text found in " + name);
+        bk.id = "ph" + Long.toString(System.currentTimeMillis(), 36) + Integer.toString((int) (Math.random() * 1296), 36);
+        if (bk.lang.isEmpty() || !bk.lang.equals(lang)) bk.lang = lang;
+        bk.write(new File(app.dir("books"), bk.id + ".json"));
+        if (epub) {
+            try (InputStream again = getContentResolver().openInputStream(u)) {
+                byte[] pic = com.batchmine.pocket.core.EpubCover.extract(again);
+                if (pic != null) try (java.io.FileOutputStream fo = new java.io.FileOutputStream(coverFile(bk.id))) { fo.write(pic); }
+            } catch (IOException | RuntimeException ignored) { /* no cover: the lettered one is used */ }
+            try (InputStream again = getContentResolver().openInputStream(u)) {                  // the author, year and description the book says about itself
+                Map<String, String> m = com.batchmine.pocket.core.EpubMeta.read(again);
+                Map<String, Object> e = Details.get(Details.bookKey(bk.id));
+                if (com.batchmine.pocket.core.Meta.fromEpub(e, m, System.currentTimeMillis())) Details.put(Details.bookKey(bk.id), e);
+            } catch (IOException | RuntimeException ignored) { /* no details in the file */ }
+        }
+        return bk.id;
     }
 
     private void addVideos(List<Uri> uris) {

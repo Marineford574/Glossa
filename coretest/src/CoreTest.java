@@ -82,6 +82,32 @@ public class CoreTest {
     } catch (Exception ex) { check("epub cover", false, ex); }
     check("pretty name", Shows.pretty("Some_Film.2019.1080p.x264.mkv").equals("Some Film 2019"), Shows.pretty("Some_Film.2019.1080p.x264.mkv"));
     check("show key ignores case and dots", Shows.key("Don Matteo").equals(Shows.key("don.matteo")), "");
+
+    // ---- details: tags, EPUB author with special characters, folder rules
+    {
+      Map<String, Object> e = new java.util.LinkedHashMap<>();
+      Map<String, Object> f = new java.util.LinkedHashMap<>();
+      f.put("tags", " Sci-Fi, #Mystery;  sci-fi"); f.put("rating", "4"); f.put("creator", "Baran bo Odar"); f.put("level", "b2");
+      Meta.update(e, f, 5);
+      check("meta: tags tidied, stars, level upper case", Meta.list(e, "tags").equals(java.util.Arrays.asList("sci-fi", "mystery")) && ((Number) e.get("rating")).intValue() == 4 && "B2".equals(e.get("level")), e.toString());
+      e.put("suggest", new java.util.ArrayList<Object>(java.util.Arrays.asList("time travel", "german")));
+      Meta.decide(e, java.util.Arrays.asList("german"), java.util.Arrays.asList("time travel"), 6);
+      check("meta: an accepted tag joins, a turned-down one is remembered", Meta.list(e, "tags").contains("german") && !e.containsKey("suggest") && Meta.list(e, "rejected").contains("time travel"), e.toString());
+      Map<String, Object> mine = new java.util.LinkedHashMap<>(); mine.put("t", 10L); mine.put("pckey", "series:/x");
+      Map<String, Object> theirs = new java.util.LinkedHashMap<>(); theirs.put("t", 20L); theirs.put("desc", "PC");
+      check("meta: a newer PC entry replaces, the link stays", Meta.takeNewer(mine, theirs) && "PC".equals(mine.get("desc")) && "series:/x".equals(mine.get("pckey")) && !Meta.takeNewer(mine, theirs), mine.toString());
+      check("meta: folder rules", Meta.folderShow("Mushi-Shi", new String[]{}) [0].equals("Mushi-Shi") && Meta.folderShow("Shows", new String[]{"Dark", "Season 2"})[0].equals("Dark")
+          && Meta.folderShow("Shows", new String[]{"Dark", "Season 2"})[1].equals("2") && Meta.folderShow("Dark", new String[]{"Staffel 1"})[0].equals("Dark"), "");
+      String opf = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><package><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>Povratak</dc:title>"
+          + "<dc:creator opf:role=\"aut\">Krle\u017ea, Miroslav</dc:creator><dc:creator>Ivan Gor&#269;i&#x107; &amp; \u0160enoa</dc:creator><dc:date>1932-01-01T00:00:00</dc:date>"
+          + "<dc:description>&lt;p&gt;Ein Maler kehrt zur&#252;ck.&lt;/p&gt;</dc:description><dc:language>hr</dc:language></metadata></package>";
+      Map<String, String> m = EpubMeta.parse(opf.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      check("epub meta: authors keep their letters, year, description", "Miroslav Krle\u017ea, Ivan Gor\u010di\u0107 & \u0160enoa".equals(m.get("creator")) && "1932".equals(m.get("aired")) && "Ein Maler kehrt zur\u00fcck.".equals(m.get("desc")), m.toString());
+      byte[] latin = "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><metadata><dc:creator>D\u00fcrrenmatt, Friedrich</dc:creator></metadata>".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+      check("epub meta: a file in another encoding is read in that encoding", "Friedrich D\u00fcrrenmatt".equals(EpubMeta.parse(latin).get("creator")), EpubMeta.parse(latin).toString());
+      Map<String, Object> bk = new java.util.LinkedHashMap<>();
+      check("meta: the book's own details fill empty fields only", Meta.fromEpub(bk, m, 1) && !Meta.fromEpub(bk, m, 2) && bk.get("creator") != null, bk.toString());
+    }
     System.out.println(fails == 0 ? "all passed" : fails + " FAILED");
     System.exit(fails == 0 ? 0 : 1);
   }

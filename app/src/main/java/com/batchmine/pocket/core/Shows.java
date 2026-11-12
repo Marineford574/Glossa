@@ -16,6 +16,11 @@ public final class Shows {
         public final String show;       // "" = not part of a series (a film)
         public final int season, episode;
         Ep(String show, int season, int episode) { this.show = show; this.season = season; this.episode = episode; }
+        /** The same episode with a show name (and season) taken from its folder, where the file name has none. */
+        public Ep with(String showName, int seasonNo) {
+            return new Ep(show.isEmpty() && showName != null ? showName : show, season <= 0 && seasonNo > 0 ? seasonNo : season, episode);
+        }
+        public Ep withEpisode(int n) { return new Ep(show, season, n); }
         /** For sorting: season, then episode. */
         public long order() { return season * 100000L + episode; }
         public String label() { return episode < 0 ? "" : (season > 0 ? "S" + season + " · " : "") + "Ep " + episode; }
@@ -71,4 +76,12 @@ public final class Shows {
 
     /** The key two names of the same show share (case and punctuation do not count). */
     public static String key(String show) { return show.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", ""); }
+
+    private static final Pattern SEASON_DIR = Pattern.compile("(?i)^(?:season|staffel|stagione|sezona|saison|temporada|s)[\\s._-]*(\\d{1,2})$");
+
+    /** The season number a folder name says ("Season 2", "Staffel 02", "S3"), or 0. */
+    public static int seasonOfFolder(String folder) {
+        Matcher m = SEASON_DIR.matcher(folder == null ? "" : folder.trim());
+        return m.matches() ? Integer.parseInt(m.group(1)) : 0;
+    }
 }

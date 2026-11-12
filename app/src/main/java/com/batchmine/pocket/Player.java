@@ -1,6 +1,7 @@
 package com.batchmine.pocket;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -88,6 +89,22 @@ public final class Player extends Activity {
             catch (IOException | RuntimeException e) { App.get().report("Could not read the link " + f.getName(), e); }
         }
         return Uri.fromFile(f);
+    }
+
+    /** Show, season and episode of a video: from its name, and where the name says no show, from the folder it was added from (prefs vshow_ / vseason_). */
+    static com.batchmine.pocket.core.Shows.Ep epOf(File f) {
+        String name = videoName(f);
+        com.batchmine.pocket.core.Shows.Ep e = com.batchmine.pocket.core.Shows.of(name);
+        android.content.SharedPreferences sp = App.get().prefs();
+        String vs = sp.getString("vshow_" + f.getName(), "");
+        if (!vs.isEmpty()) {
+            e = e.with(vs, sp.getInt("vseason_" + f.getName(), 0));
+            if (e.episode < 0) {                                  // "01.mkv", "Episode.mkv": the first number in the name
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,3})").matcher(name.replaceAll("\\.[^.]+$", ""));
+                if (m.find()) e = e.withEpisode(Integer.parseInt(m.group(1)));
+            }
+        }
+        return e;
     }
 
     static String niceName(File f) { return f.getName().replaceAll("\\.[^.]+$", ""); }
@@ -187,7 +204,7 @@ public final class Player extends Activity {
         backIc.setOnClickListener(v -> finish());
         topBar.addView(backIc, new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44)));
         LinearLayout tcol = Ui.col(this);
-        com.batchmine.pocket.core.Shows.Ep ep = com.batchmine.pocket.core.Shows.of(videoName(file));
+        com.batchmine.pocket.core.Shows.Ep ep = epOf(file);
         TextView ttl = Ui.text(this, !ep.show.isEmpty() ? ep.show : com.batchmine.pocket.core.Shows.pretty(videoName(file)), 16, 0xFFFFFFFF);
         ttl.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
         ttl.setSingleLine(true); ttl.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -280,7 +297,11 @@ public final class Player extends Activity {
             h.removeCallbacksAndMessages(null);
             tick();
         });
-        video.setOnCompletionListener(mp -> app.prefs().edit().putBoolean("vdone_" + file.getName(), true).putFloat("vpos_" + file.getName(), 0).putLong("vpost_" + file.getName(), System.currentTimeMillis()).apply());
+        queue = getIntent().getStringArrayExtra("queue");
+        video.setOnCompletionListener(mp -> {
+            app.prefs().edit().putBoolean("vdone_" + file.getName(), true).putFloat("vpos_" + file.getName(), 0).putLong("vpost_" + file.getName(), System.currentTimeMillis()).apply();
+            playNextInQueue();
+        });
         video.setOnErrorListener((mp, w, e) -> { Ui.alert(this, "Cannot play this video", "The phone could not play " + file.getName() + (file.getName().endsWith(".vlink") ? " (if you moved or deleted the video, add it again)" : "") + ". MP4 (H.264) works everywhere; other formats depend on the phone."); return true; });
     }
 
@@ -861,6 +882,18 @@ public final class Player extends Activity {
                 shown = -2;
             }).show();
         });
+    }
+
+    private String[] queue;                                  // the videos to play after this one (a series, a playlist)
+
+    /** At the end of a video: the next of its series or playlist starts. */
+    private void playNextInQueue() {
+        if (queue == null || queue.length == 0 || isFinishing()) return;
+        Intent i = new Intent(this, Player.class);
+        i.putExtra("path", queue[0]);
+        if (queue.length > 1) i.putExtra("queue", java.util.Arrays.copyOfRange(queue, 1, queue.length));
+        startActivity(i);
+        finish();
     }
 
     private boolean tickFailed;
