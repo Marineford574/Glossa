@@ -134,8 +134,8 @@
             </intent-filter>
         </activity-alias>
         <activity android:name=".Reader" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
-        <activity android:name=".Player" android:exported="false" android:screenOrientation="fullSensor"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity android:name=".Player" android:exported="false" android:screenOrientation="fullSensor" android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
 
         <provider android:name=".FilesProvider" android:authorities="com.batchmine.pocket.files"
             android:exported="false" android:grantUriPermissions="true" />

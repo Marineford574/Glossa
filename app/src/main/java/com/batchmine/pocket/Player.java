@@ -10,6 +10,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -367,6 +368,7 @@ public final class Player extends Activity {
         String secName = app.prefs().getString("sub2_" + file.getName(), null);
         if (secName != null) { t = null; for (File f : subs) if (f.getName().equals(secName)) t = f; }
         main = read(a);
+        mainFile = a;
         second = t == null ? new ArrayList<>() : read(t);
         spanCache.clear();
         if (adapter != null) { arrange(); }
@@ -680,16 +682,44 @@ public final class Player extends Activity {
         if (!t.contentEquals(statusText.getText())) { statusText.setText(t); statusText.setVisibility(t.isEmpty() ? View.GONE : View.VISIBLE); }
     }
 
+    /** The speeds: the usual ones (0,7 – 2×) big and first, the rest (down to 0,25×, up to 4×) smaller below, and a fine step. */
     private void speedMenu() {
-        float[] st = {0.5f, 0.6f, 0.7f, 0.75f, 0.8f, 0.85f, 0.9f, 0.95f, 1f, 1.1f, 1.25f, 1.5f, 1.75f, 2f};
-        String[] items = new String[st.length];
-        int cur = 8;
-        for (int i = 0; i < st.length; i++) { items[i] = String.valueOf(st[i]).replace('.', ',').replaceAll(",0$", "") + "×"; if (Math.abs(st[i] - speed) < 0.01f) cur = i; }
-        Ui.choose(this, "Speed", items, cur, i -> setSpeed(st[i]));
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 16));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        float[] usual = {0.7f, 0.75f, 0.8f, 0.85f, 0.9f, 0.95f, 1f, 1.1f, 1.25f, 1.5f, 1.75f, 2f};
+        float[] other = {0.25f, 0.3f, 0.4f, 0.5f, 0.6f, 2.25f, 2.5f, 2.75f, 3f, 3.5f, 4f};
+        l.addView(menuHead("Usual speeds"));
+        Flow f1 = new Flow(this, 8);
+        for (float v : usual) f1.addView(speedChip(v, true, d));
+        l.addView(f1);
+        l.addView(menuHead("Slower and faster"));
+        Flow f2 = new Flow(this, 6);
+        for (float v : other) f2.addView(speedChip(v, false, d));
+        l.addView(f2);
+        l.addView(menuHead("In small steps"));
+        LinearLayout r = Ui.row(this);
+        r.addView(Ui.weight(Ui.button(this, "− 0,05", v -> { setSpeed(Math.max(0.25f, Math.round((speed - 0.05f) * 100) / 100f)); Ui.dismiss(d[0]); speedMenu(); }), 1));
+        r.addView(Ui.weight(Ui.button(this, speedLabel(speed), v -> { setSpeed(1f); Ui.dismiss(d[0]); }), 1));
+        r.addView(Ui.weight(Ui.button(this, "+ 0,05", v -> { setSpeed(Math.min(4f, Math.round((speed + 0.05f) * 100) / 100f)); Ui.dismiss(d[0]); speedMenu(); }), 1));
+        l.addView(r);
+        l.addView(Ui.hint(this, "Middle button: back to normal. Above 2× some phones lose the sound or keep it only partly."));
+        d[0] = Ui.sheet(this, "Speed", Ui.scroll(this, l), false);
+    }
+
+    private TextView speedChip(float v, boolean big, android.app.Dialog[] d) {
+        boolean on = Math.abs(v - speed) < 0.011f;
+        TextView t = Ui.text(this, String.valueOf(v).replace('.', ',').replaceAll(",0$", "") + "×", big ? 17 : 14, on ? Ui.ON_ACC : big ? Ui.TEXT : Ui.DIM);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(Ui.dp(this, big ? 16 : 12), Ui.dp(this, big ? 11 : 8), Ui.dp(this, big ? 16 : 12), Ui.dp(this, big ? 11 : 8));
+        t.setBackground(Ui.round(on ? Ui.ACCENT : Ui.mix(Ui.BG, Ui.TEXT, big ? 0.10f : 0.05f), Ui.dp(this, 99)));
+        if (on) t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        t.setOnClickListener(x -> { setSpeed(v); Ui.dismiss(d[0]); });
+        return t;
     }
 
     private void setSpeed(float v) {
-        speed = v;
+        speed = Math.max(0.25f, Math.min(4f, v));
         app.prefs().edit().putFloat("speed", speed).apply();
         speedLbl.setText(speedLabel(speed));
         applySpeed();
@@ -737,14 +767,22 @@ public final class Player extends Activity {
         l.addView(menuRow("Say this line again", "", false, () -> action("repeat"), d));
         l.addView(menuRow("Next line", "", false, () -> action("next"), d));
         l.addView(menuRow("Mark the line for a card", "★", false, () -> action("mark"), d));
+        l.addView(menuRow("Edit this line…", "", false, () -> editLine(Subs.around(main, video.getCurrentPosition() / 1000.0 - delay)), d));
+        l.addView(menuRow("Copy the line", "", false, () -> copyLine(Subs.around(main, video.getCurrentPosition() / 1000.0 - delay)), d));
         l.addView(menuHead("Lists"));
         l.addView(menuRow("All lines", main.size() + "", false, this::linesDialog, d));
-        l.addView(menuRow("Words of this video you don't know", "", false, this::unknownWords, d));
+        l.addView(menuHead("Cards from many lines"));
+        l.addView(menuRow("From the lines marked with ★…", "", false, () -> cardTool("marked"), d));
+        l.addView(menuRow("From the unknown words…", "", false, () -> cardTool("words"), d));
+        l.addView(menuRow("Lines with exactly one unknown word…", "", false, () -> cardTool("one"), d));
         l.addView(menuHead("Picture and text"));
         if (port) l.addView(menuRow("Video on top, the lines below", "", app.prefs().getBoolean("player_stack", true), () -> action("layout"), d));
         l.addView(menuRow("Subtitle timing…", delay == 0 ? "" : String.format(Locale.ROOT, "%+.1f s", delay), false, this::delayDialog, d));
         l.addView(menuRow("Text bigger / smaller", "", false, () -> action("size"), d));
         l.addView(menuRow("Turn the picture", "", false, () -> action("rotate"), d));
+        l.addView(menuHead("Window"));
+        if (android.os.Build.VERSION.SDK_INT >= 26) l.addView(menuRow("Small window on top of other apps", "", false, this::smallWindow, d));
+        l.addView(menuRow("Save a picture of this moment", "", false, this::screenshot, d));
         l.addView(menuRow("Close the video", "", false, this::finish, d));
         d[0] = Ui.sheet(this, "Menu", Ui.scroll(this, l), true);
     }
@@ -830,7 +868,15 @@ public final class Player extends Activity {
         for (double st : steps) r.addView(Ui.weight(Ui.button(this, (st > 0 ? "+" : "−") + Math.abs(st) + " s", v -> { setDelay(delay + st); draw.run(); }), 1));
         box.addView(r);
         box.addView(Ui.hint(this, "If the words come before the sound, use + ; if they come after, use −. The setting is kept for this video."));
-        Ui.dialog(this).setTitle("Subtitle timing").setView(box).setPositiveButton("OK", null).setNeutralButton("Reset", (d, w) -> setDelay(0)).show();
+        android.app.AlertDialog.Builder b = Ui.dialog(this).setTitle("Subtitle timing").setView(box).setPositiveButton("OK", null).setNeutralButton("Reset", (d, w) -> setDelay(0));
+        if (delay != 0) b.setNegativeButton("Write it into the file", (d, w) -> {          // the PC's "write the delay you set": the file itself is then on time
+            main = Subs.shift(main, delay);
+            double was = delay;
+            setDelay(0);
+            writeSubs();
+            Ui.toast(this, String.format(Locale.ROOT, "Every line moved %+.1f s in the file", was));
+        });
+        b.show();
     }
 
     private void linesDialog() {
@@ -841,6 +887,7 @@ public final class Player extends Activity {
         android.app.AlertDialog dlg = Ui.dialog(this).setTitle("All lines (" + items.length + ")").setItems(items, (d, i) -> jump(i))
                 .setNeutralButton("Unknown words", (d, w) -> unknownWords()).create();
         dlg.getListView().setFastScrollEnabled(true);
+        dlg.getListView().setOnItemLongClickListener((av, v, pos, id) -> { dlg.dismiss(); editLine(pos); return true; });      // hold a line: edit it
         dlg.show();
         dlg.getListView().setSelection(now);
     }
@@ -1006,6 +1053,7 @@ public final class Player extends Activity {
         trText.setVisibility(tr.length() > 0 && !hideTr ? View.VISIBLE : View.GONE);
     }
 
+    private File mainFile;                                   // the subtitle file the lines came from (edits are written back to it)
     private boolean sheetUp;                                 // the word sheet is open: the video stays paused (nothing restarts it)
 
     private void tapped(String word, int at, String text, Subs.Cue c) {
@@ -1015,6 +1063,321 @@ public final class Player extends Activity {
         h.removeCallbacksAndMessages(null);
         h.postDelayed(this::tick, 120);
         Marks.add(file.getName(), c.start, c.text, false);                  // a line you looked a word up in
+        Cards.Request r = requestFor(c, text);
+        WordSheet.show(this, lang, word, r, () -> { col.forget(); spanCache.clear(); shown = -2; }, () -> { sheetUp = false; immersive(); });
+    }
+
+
+    // ---------------------------------------------------------------- editing the lines (the PC player's line editor)
+    private void copyLine(int i) {
+        if (i < 0 || i >= main.size()) { Ui.toast(this, "No line here"); return; }
+        android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("line", main.get(i).text.replace('\n', ' ')));
+        Ui.toast(this, "Line copied");
+    }
+
+    /** Writes the lines back: an .srt is replaced (the first time its old self is kept as .bak), any other format becomes a new .srt that is then the one in use. */
+    private boolean writeSubs() {
+        try {
+            if (mainFile == null) return false;
+            File target = mainFile;
+            if (!mainFile.getName().toLowerCase(Locale.ROOT).endsWith(".srt")) {
+                String n = mainFile.getName();
+                target = new File(mainFile.getParentFile(), n.substring(0, n.lastIndexOf('.')) + ".edited.srt");
+                app.prefs().edit().putString("sub_" + file.getName(), target.getName()).apply();
+            } else {
+                File bak = new File(mainFile.getPath() + ".bak");
+                if (!bak.exists()) Files.copy(mainFile.toPath(), bak.toPath());
+            }
+            Files.write(target.toPath(), Subs.toSrt(main).getBytes(StandardCharsets.UTF_8));
+            mainFile = target;
+            spanCache.clear();
+            shown = -2;
+            if (adapter != null) adapter.notifyDataSetChanged();
+            return true;
+        } catch (IOException | RuntimeException e) {
+            app.report("Could not save the subtitles", e);
+            Ui.toast(this, "Could not save the subtitles: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private void editLine(int i) {
+        if (i < 0 || i >= main.size()) { Ui.toast(this, "No line here"); return; }
+        final Subs.Cue c = main.get(i);
+        video.pause();
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 14), Ui.dp(this, 4), Ui.dp(this, 14), Ui.dp(this, 16));
+        double[] t = {c.start, c.end};
+        TextView when = Ui.text(this, "", 14, Ui.DIM);
+        Runnable draw = () -> when.setText(Ui.time(t[0]) + "  →  " + Ui.time(t[1]) + String.format(Locale.ROOT, "   (%.1f s)", t[1] - t[0]));
+        draw.run();
+        l.addView(when);
+        android.widget.EditText e = Ui.input(this, c.text, "the line");
+        e.setSingleLine(false);
+        e.setHorizontallyScrolling(false);
+        e.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        e.setMinLines(3);
+        e.setMaxLines(9);
+        e.setGravity(Gravity.TOP | Gravity.START);
+        e.setTextSize(17);
+        e.setLineSpacing(0, 1.15f);
+        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ep.topMargin = Ui.dp(this, 8);
+        l.addView(e, ep);
+        l.addView(Ui.hint(this, "Put the cursor where a line should be cut, then “Cut here”."));
+        l.addView(menuHead("Time"));
+        LinearLayout r = Ui.row(this);
+        String[] names = {"Starts", "Ends"};
+        for (int k = 0; k < 2; k++) {
+            final int kk = k;
+            LinearLayout col = Ui.col(this);
+            col.addView(Ui.text(this, names[k], 12, Ui.DIM));
+            LinearLayout b = Ui.row(this);
+            b.addView(Ui.weight(Ui.small(this, "− 0,1", v -> { t[kk] = Math.max(0, Math.round((t[kk] - 0.1) * 10) / 10.0); draw.run(); }), 1));
+            b.addView(Ui.weight(Ui.small(this, "+ 0,1", v -> { t[kk] = Math.round((t[kk] + 0.1) * 10) / 10.0; draw.run(); }), 1));
+            col.addView(b);
+            r.addView(Ui.weight(col, 1));
+        }
+        l.addView(r);
+        l.addView(Ui.hint(this, "The sound of the line is played again from here: close this and press ⟲."));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        // what the edited line is, as a list of lines (the text may be a different one now)
+        java.util.function.Supplier<List<Subs.Cue>> edited = () -> {
+            List<Subs.Cue> out = new ArrayList<>(main);
+            out.set(i, new Subs.Cue(t[0], Math.max(t[1], t[0] + 0.2), e.getText().toString().trim()));
+            return out;
+        };
+        java.util.function.Consumer<List<Subs.Cue>> apply = list -> { main = list; if (writeSubs()) Ui.toast(this, "Saved"); Ui.dismiss(d[0]); };
+        LinearLayout b1 = Ui.row(this), b2 = Ui.row(this);
+        Button save = Ui.button(this, "Save", v -> apply.accept(edited.get().get(i).text.isEmpty() ? deleteAt(edited.get(), i) : edited.get()));
+        b1.addView(Ui.weight(save, 1.4f));
+        b1.addView(Ui.weight(Ui.button(this, "Cut here", v -> {
+            List<Subs.Cue> cur = edited.get();
+            List<Subs.Cue> sp = Subs.split(cur, i, e.getSelectionStart());
+            if (sp == cur) { Ui.toast(this, "Put the cursor inside the text, between two words"); return; }
+            apply.accept(sp);
+        }), 1));
+        b2.addView(Ui.weight(Ui.button(this, "Join with the next", v -> {
+            if (i + 1 >= main.size()) { Ui.toast(this, "This is the last line"); return; }
+            apply.accept(Subs.mergeNext(edited.get(), i));
+        }), 1));
+        b2.addView(Ui.weight(Ui.button(this, "Copy", v -> { copyLine(i); }), 1));
+        b2.addView(Ui.weight(Ui.button(this, "Delete", v -> apply.accept(deleteAt(new ArrayList<>(main), i))), 1));
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        bp.topMargin = Ui.dp(this, 10);
+        l.addView(b1, bp);
+        l.addView(b2, bp);
+        d[0] = Ui.sheet(this, "Line " + (i + 1) + " of " + main.size(), Ui.scroll(this, l), false);
+    }
+
+    private static List<Subs.Cue> deleteAt(List<Subs.Cue> list, int i) { List<Subs.Cue> o = new ArrayList<>(list); o.remove(i); return o; }
+
+    // ---------------------------------------------------------------- cards from many lines (the PC's "Make cards" lists)
+    private static final class Cand {
+        final String word; final int line; int count = 1;
+        Cand(String word, int line) { this.word = word; this.line = line; }
+    }
+
+    /** MODE: "marked" = the unknown words of the lines you marked ★, "words" = of a set of lines you choose, "one" = lines with exactly one unknown word. */
+    private void cardTool(String mode) {
+        if (main.isEmpty()) { Ui.toast(this, "No subtitles"); return; }
+        if (mode.equals("words")) {
+            int now = Math.max(0, Subs.around(main, video.getCurrentPosition() / 1000.0 - delay));
+            Ui.choose(this, "Which lines?", new String[]{"All " + main.size() + " lines", "The next 30 lines from here", "Only the ★ marked lines"}, -1, k -> {
+                List<Integer> idx = new ArrayList<>();
+                if (k == 2) idx = markedLines();
+                else for (int i = k == 0 ? 0 : now; i < main.size() && (k == 0 || i < now + 30); i++) idx.add(i);
+                findCandidates("words", idx);
+            });
+            return;
+        }
+        if (mode.equals("marked")) {
+            List<Integer> idx = markedLines();
+            if (idx.isEmpty()) { Ui.alert(this, "No marked lines", "Mark a line with ★ while you watch, then come back here."); return; }
+            findCandidates("words", idx);
+            return;
+        }
+        List<Integer> all = new ArrayList<>();
+        for (int i = 0; i < main.size(); i++) all.add(i);
+        findCandidates("one", all);
+    }
+
+    private List<Integer> markedLines() {
+        List<Integer> idx = new ArrayList<>();
+        for (Marks.Line ln : Marks.list(file.getName())) {
+            if (!ln.marked()) continue;
+            int i = Subs.around(main, ln.start);
+            if (i >= 0 && !idx.contains(i)) idx.add(i);
+        }
+        java.util.Collections.sort(idx);
+        return idx;
+    }
+
+    private void findCandidates(String mode, List<Integer> lines) {
+        Ui.toast(this, "Looking for the unknown words…");
+        app.bg(() -> {
+            java.util.Map<String, Cand> words = new java.util.LinkedHashMap<>();
+            List<Cand> ones = new ArrayList<>();
+            java.util.Map<String, Boolean> state = new java.util.HashMap<>();
+            for (int i : lines) {
+                String text = main.get(i).text;
+                java.util.LinkedHashSet<String> unk = new java.util.LinkedHashSet<>();
+                for (int[] w : Subs.words(text)) {
+                    String word = text.substring(w[0], w[1]).toLowerCase(Locale.ROOT);
+                    if (word.length() < 2) continue;
+                    Boolean u = state.get(word);
+                    if (u == null) { u = col.state(word).equals("u"); state.put(word, u); }
+                    if (u) unk.add(word);
+                }
+                for (String w : unk) { Cand c = words.get(w); if (c == null) words.put(w, new Cand(w, i)); else c.count++; }
+                if (mode.equals("one") && unk.size() == 1) ones.add(new Cand(unk.iterator().next(), i));
+            }
+            List<Cand> list = new ArrayList<>(mode.equals("one") ? ones : words.values());
+            if (!mode.equals("one")) list.sort((a, b) -> b.count != a.count ? Integer.compare(b.count, a.count) : Integer.compare(a.line, b.line));
+            final List<Cand> shown = list.size() > 300 ? new ArrayList<>(list.subList(0, 300)) : list;
+            app.post(() -> {
+                if (shown.isEmpty()) { Ui.alert(this, "Nothing to make", mode.equals("one") ? "No line has exactly one unknown word." : "No unknown words in these lines."); return; }
+                cardPicker(mode.equals("one") ? shown.size() + " lines with one unknown word" : shown.size() + " unknown words", shown, mode.equals("one"));
+            });
+        });
+    }
+
+    private void cardPicker(String title, List<Cand> cands, boolean showLine) {
+        LinearLayout box = Ui.col(this);
+        boolean[] on = new boolean[cands.size()];
+        TextView[] marks = new TextView[cands.size()];
+        Button go = Ui.button(this, "", null);
+        Runnable count = () -> { int n = 0; for (boolean b : on) if (b) n++; go.setText(n == 0 ? "Choose the words" : "Make " + n + " card" + (n == 1 ? "" : "s")); go.setEnabled(n > 0); };
+        LinearLayout top = Ui.row(this);
+        top.setPadding(Ui.dp(this, 10), Ui.dp(this, 2), Ui.dp(this, 10), Ui.dp(this, 4));
+        top.addView(Ui.small(this, "All", v -> { for (int i = 0; i < on.length; i++) { on[i] = true; marks[i].setText("☑"); } count.run(); }));
+        top.addView(Ui.small(this, "None", v -> { for (int i = 0; i < on.length; i++) { on[i] = false; marks[i].setText("☐"); } count.run(); }));
+        top.addView(Ui.small(this, "Top 10", v -> { for (int i = 0; i < on.length; i++) { on[i] = i < 10; marks[i].setText(on[i] ? "☑" : "☐"); } count.run(); }));
+        box.addView(top);
+        LinearLayout list = Ui.col(this);
+        list.setPadding(Ui.dp(this, 6), 0, Ui.dp(this, 6), Ui.dp(this, 6));
+        for (int k = 0; k < cands.size(); k++) {
+            final int kk = k;
+            Cand c = cands.get(k);
+            LinearLayout r = Ui.row(this);
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setPadding(Ui.dp(this, 10), Ui.dp(this, 9), Ui.dp(this, 10), Ui.dp(this, 9));
+            r.setBackground(Ui.press(0x00000000, 0x00000000, Ui.dp(this, Ui.RS)));
+            TextView ck = Ui.text(this, "☐", 20, Ui.ACCENT);
+            ck.setMinWidth(Ui.dp(this, 32));
+            marks[k] = ck;
+            r.addView(ck);
+            LinearLayout col2 = Ui.col(this);
+            TextView w = Ui.text(this, c.word + (c.count > 1 ? "   ×" + c.count : ""), 17, Ui.TEXT);
+            w.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            col2.addView(w);
+            String ctx = main.get(c.line).text.replace('\n', ' ');
+            TextView sub = Ui.text(this, Ui.time(main.get(c.line).start) + "  " + (ctx.length() > 90 ? ctx.substring(0, 90) + "…" : ctx), 12, Ui.DIM);
+            sub.setSingleLine(true);
+            sub.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            col2.addView(sub);
+            r.addView(col2, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            r.setOnClickListener(v -> { on[kk] = !on[kk]; ck.setText(on[kk] ? "☑" : "☐"); count.run(); });
+            r.setOnLongClickListener(v -> { video.pause(); tapped(c.word, 0, main.get(c.line).text, main.get(c.line)); return true; });      // hold: look it up
+            list.addView(r);
+        }
+        box.addView(Ui.scroll(this, list), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        LinearLayout foot = Ui.col(this);
+        foot.setPadding(Ui.dp(this, 12), Ui.dp(this, 6), Ui.dp(this, 12), Ui.dp(this, 12));
+        foot.addView(Ui.hint(this, "Tap to choose. Hold a word to look it up first. Each card gets its sentence, the translation, the picture, the sound and the dictionaries' meanings."));
+        foot.addView(go);
+        box.addView(foot);
+        count.run();
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        go.setOnClickListener(v -> {
+            List<Cand> chosen = new ArrayList<>();
+            for (int i = 0; i < on.length; i++) if (on[i]) chosen.add(cands.get(i));
+            Ui.dismiss(d[0]);
+            makeCards(chosen, 0);
+        });
+        d[0] = Ui.sheet(this, title, box, true);
+    }
+
+    /** One card after the other (each is made on its own, like a tap on "Make card"). */
+    private void makeCards(List<Cand> list, int k) {
+        if (k >= list.size()) { Ui.toast(this, list.size() + " card" + (list.size() == 1 ? "" : "s") + " done"); return; }
+        Cand c = list.get(k);
+        if (k == 0) Ui.toast(this, "Making " + list.size() + " card" + (list.size() == 1 ? "" : "s") + "…");
+        app.bg(() -> {
+            com.batchmine.pocket.core.Dictionaries.Result res = null;
+            try { res = app.dicts.lookup(c.word, lang); } catch (RuntimeException ignored) { }
+            final com.batchmine.pocket.core.Dictionaries.Result rr = res;
+            app.post(() -> {
+                Subs.Cue cue = main.get(c.line);
+                Cards.Request r = requestFor(cue, cue.text);
+                r.surface = c.word;
+                r.word = rr == null ? c.word : rr.lemma();
+                if (rr != null && rr.found()) {
+                    r.glosses = rr.hits.get(0).glosses;
+                    r.defHtml = com.batchmine.pocket.core.Dictionaries.allMeanings(rr, null);
+                    r.richBy = com.batchmine.pocket.core.Dictionaries.meaningsByLabel(rr, null, Cards.dictLabels(lang));
+                    if (rr.freq > 0) r.freq = String.valueOf(rr.freq);
+                    r.ipa = rr.ipa.isEmpty() ? "" : rr.ipa.values().iterator().next();
+                }
+                Cards.make(this, r, () -> makeCards(list, k + 1));
+            });
+        });
+    }
+
+    // ---------------------------------------------------------------- the window
+    private boolean inPip;
+
+    @android.annotation.SuppressLint("NewApi")
+    private void smallWindow() {
+        try {
+            android.app.PictureInPictureParams p = new android.app.PictureInPictureParams.Builder().setAspectRatio(new android.util.Rational(16, 9)).build();
+            enterPictureInPictureMode(p);
+        } catch (RuntimeException e) { Ui.toast(this, "This phone cannot show the video in a small window"); }
+    }
+
+    @Override public void onPictureInPictureModeChanged(boolean in, android.content.res.Configuration cfg) {
+        super.onPictureInPictureModeChanged(in, cfg);
+        inPip = in;
+        if (in) { topBar.setVisibility(View.GONE); ctl.setVisibility(View.GONE); statusText.setVisibility(View.GONE); if (listView != null) listView.setVisibility(View.GONE); }
+        else { topBar.setVisibility(View.VISIBLE); ctl.setVisibility(View.VISIBLE); uiOn = true; arrange(); }
+    }
+
+    /** The picture at this moment into Pictures/Glossa. */
+    private void screenshot() {
+        double t = video.getCurrentPosition() / 1000.0;
+        Ui.toast(this, "Saving the picture…");
+        app.bg(() -> {
+            try {
+                File tmp = new File(getCacheDir(), "shot_" + System.currentTimeMillis() + ".jpg");
+                MediaCut.frame(this, videoUri(file), t, tmp);
+                String name = niceName(file) + "_" + (int) t + "s.jpg";
+                String where;
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    android.content.ContentValues cv = new android.content.ContentValues();
+                    cv.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name);
+                    cv.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+                    cv.put("relative_path", "Pictures/Glossa");
+                    Uri u = getContentResolver().insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
+                    if (u == null) throw new IOException("the phone would not take the picture");
+                    try (java.io.OutputStream o = getContentResolver().openOutputStream(u)) { Files.copy(tmp.toPath(), o); }
+                    where = "Pictures / Glossa";
+                } else {
+                    File dir = getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES);
+                    File dest = new File(dir, name);
+                    Files.copy(tmp.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    where = dest.getParent();
+                }
+                //noinspection ResultOfMethodCallIgnored
+                tmp.delete();
+                final String w = where;
+                app.post(() -> Ui.toast(this, "Saved in " + w));
+            } catch (IOException | RuntimeException e) { app.post(() -> Ui.toast(this, "Could not save the picture: " + e.getMessage())); }
+        });
+    }
+
+    /** What a card of this line needs: the line, its translation, where it is in the video, the lines around it. */
+    private Cards.Request requestFor(Subs.Cue c, String text) {
         Cards.Request r = new Cards.Request();
         r.lang = lang;
         r.kind = "video";
@@ -1033,7 +1396,7 @@ public final class Player extends Activity {
             if (ci - k >= 0) r.before.add(new Cards.Ctx(main.get(ci - k).text.replace('\n', ' '), main.get(ci - k).start + delay, main.get(ci - k).end + delay));
             if (ci + k < main.size()) r.after.add(new Cards.Ctx(main.get(ci + k).text.replace('\n', ' '), main.get(ci + k).start + delay, main.get(ci + k).end + delay));
         }
-        WordSheet.show(this, lang, word, r, () -> { col.forget(); spanCache.clear(); shown = -2; }, () -> { sheetUp = false; immersive(); });
+        return r;
     }
 
     @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) { Stopwatch.active(); lastTouch = System.currentTimeMillis(); return super.dispatchTouchEvent(e); }

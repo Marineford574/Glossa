@@ -138,4 +138,41 @@ public final class PcLink {
         if (!err.isEmpty()) msg.append(" (").append(err).append(")");
         return msg.toString();
     }
+
+    /** A file to the PC as the body of a POST (in pieces, never whole in memory); -> the PC's JSON answer. */
+    public Map<String, Object> upload(String path, File src, Bytes cb) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) new URL(base + path).openConnection();
+        try {
+            c.setRequestMethod("POST");
+            c.setConnectTimeout(4000);
+            c.setReadTimeout(120000);
+            c.setRequestProperty("X-Token", token);
+            c.setRequestProperty("Content-Type", "application/octet-stream");
+            c.setDoOutput(true);
+            c.setFixedLengthStreamingMode(src.length());
+            try (java.io.FileInputStream in = new java.io.FileInputStream(src); OutputStream o = c.getOutputStream()) {
+                byte[] buf = new byte[1 << 16];
+                int r;
+                long done = 0, total = src.length();
+                while ((r = in.read(buf)) > 0) {
+                    o.write(buf, 0, r);
+                    done += r;
+                    if (cb != null) { cb.progress(done, total); if (cb.cancelled()) throw new IOException("cancelled"); }
+                }
+            }
+            int code = c.getResponseCode();
+            InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
+            String text = in == null ? "" : new String(Book.readAll(in), StandardCharsets.UTF_8);
+            Object parsed;
+            try { parsed = text.isEmpty() ? null : Json.parse(text); } catch (IllegalArgumentException e) { parsed = null; }
+            if (code >= 400) {
+                String err = parsed instanceof Map ? Json.str(Json.obj(parsed).get("error"), "") : "";
+                if (code == 404 && err.isEmpty()) err = "this Glossa is too old for this: update it on the PC";
+                throw new IOException(err.isEmpty() ? "the PC answered " + code : err);
+            }
+            return Json.obj(parsed);
+        } finally {
+            c.disconnect();
+        }
+    }
 }

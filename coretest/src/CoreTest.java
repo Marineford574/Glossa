@@ -105,6 +105,15 @@ public class CoreTest {
       check("epub meta: authors keep their letters, year, description", "Miroslav Krle\u017ea, Ivan Gor\u010di\u0107 & \u0160enoa".equals(m.get("creator")) && "1932".equals(m.get("aired")) && "Ein Maler kehrt zur\u00fcck.".equals(m.get("desc")), m.toString());
       byte[] latin = "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><metadata><dc:creator>D\u00fcrrenmatt, Friedrich</dc:creator></metadata>".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
       check("epub meta: a file in another encoding is read in that encoding", "Friedrich D\u00fcrrenmatt".equals(EpubMeta.parse(latin).get("creator")), EpubMeta.parse(latin).toString());
+      {
+        List<Subs.Cue> ecs = new ArrayList<>(Arrays.asList(new Subs.Cue(1, 3, "Ciao amico mio"), new Subs.Cue(4, 5, "Come stai?")));
+        List<Subs.Cue> sp = Subs.split(ecs, 0, 5);
+        check("split a line: two lines, time shared by length", sp.size() == 3 && sp.get(0).text.equals("Ciao") && sp.get(1).text.equals("amico mio") && Math.abs(sp.get(0).end - (1 + 2 * 4.0 / 13)) < 1e-9, "");
+        List<Subs.Cue> mg = Subs.mergeNext(ecs, 0);
+        check("merge with the next line", mg.size() == 1 && mg.get(0).end == 5 && mg.get(0).text.equals("Ciao amico mio\nCome stai?"), "");
+        String srt = Subs.toSrt(Subs.shift(ecs, 0.5));
+        check("shift and write .srt", srt.startsWith("1\n00:00:01,500 --> 00:00:03,500\nCiao amico mio\n\n2\n") && Subs.parse(srt).size() == 2, srt);
+      }
       check("dictionary language from its title", "it".equals(Dict.langOfTitle("Leipzig Italian Mixed-Typical")) && "de".equals(Dict.langOfTitle("Leipzig German Mixed-Typical"))
           && "it".equals(Dict.langOfTitle("wty-it-de")) && "".equals(Dict.langOfTitle("JMdict")) && "hr".equals(Dict.langOfTitle("Hrvatski rječnik")), "");
       Map<String, Object> bk = new java.util.LinkedHashMap<>();

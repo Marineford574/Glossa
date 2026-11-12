@@ -152,4 +152,50 @@ public final class Subs {
         while (m.find()) out.add(new int[]{m.start(), m.end()});
         return out;
     }
+
+    // ---------------------------------------------------------------- editing the lines (the PC player's line editor)
+    /** The lines as an .srt file. */
+    public static String toSrt(List<Cue> cues) {
+        StringBuilder sb = new StringBuilder();
+        int n = 1;
+        for (Cue c : cues) {
+            if (c.text.trim().isEmpty()) continue;
+            sb.append(n++).append('\n').append(srtTime(c.start)).append(" --> ").append(srtTime(c.end)).append('\n').append(c.text.trim()).append("\n\n");
+        }
+        return sb.toString();
+    }
+
+    public static String srtTime(double t) {
+        long ms = Math.max(0, Math.round(t * 1000));
+        return String.format(java.util.Locale.ROOT, "%02d:%02d:%02d,%03d", ms / 3600000, ms / 60000 % 60, ms / 1000 % 60, ms % 1000);
+    }
+
+    /** Line I split at character AT of its text: the time is shared by the length of the two parts. */
+    public static List<Cue> split(List<Cue> cues, int i, int at) {
+        Cue c = cues.get(i);
+        String a = c.text.substring(0, Math.max(0, Math.min(at, c.text.length()))).trim(), b = c.text.substring(Math.max(0, Math.min(at, c.text.length()))).trim();
+        if (a.isEmpty() || b.isEmpty()) return cues;
+        double mid = c.start + (c.end - c.start) * a.length() / (double) (a.length() + b.length());
+        List<Cue> out = new java.util.ArrayList<>(cues);
+        out.set(i, new Cue(c.start, mid, a));
+        out.add(i + 1, new Cue(mid, c.end, b));
+        return out;
+    }
+
+    /** Line I and the one after it as one line. */
+    public static List<Cue> mergeNext(List<Cue> cues, int i) {
+        if (i < 0 || i + 1 >= cues.size()) return cues;
+        Cue a = cues.get(i), b = cues.get(i + 1);
+        List<Cue> out = new java.util.ArrayList<>(cues);
+        out.set(i, new Cue(a.start, Math.max(a.end, b.end), a.text.trim() + "\n" + b.text.trim()));
+        out.remove(i + 1);
+        return out;
+    }
+
+    /** Every line D seconds later (− earlier); nothing before 0. */
+    public static List<Cue> shift(List<Cue> cues, double d) {
+        List<Cue> out = new java.util.ArrayList<>();
+        for (Cue c : cues) out.add(new Cue(Math.max(0, c.start + d), Math.max(0, c.end + d), c.text));
+        return out;
+    }
 }

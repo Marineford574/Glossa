@@ -1149,45 +1149,78 @@ public final class MainActivity extends Activity {
         });
     }
 
-    /** Transcripts: the phone cannot run Whisper, but the PC can. It is asked to make the subtitles of this video (it must have the video: one it
-     *  watches from), and the phone asks every 20 seconds until they are there, then keeps the file next to the video. */
+    /** Transcripts: the phone cannot run Whisper, but the PC can. It is asked to make the subtitles of this video (when it has the video), else the
+     *  phone sends only the SOUND, made small (mono, 16 kHz, about 24 kbit/s: Whisper needs no more), and the phone asks every 20 seconds
+     *  until the subtitles are there, then keeps the file next to the video. */
     private void whisperOnPc(File f) {
         PcLink pc = app.pc();
         if (pc == null) { Ui.toast(this, "Paste the PC link in Settings first: Whisper runs on the PC"); return; }
         String lang = vlang(f).isEmpty() ? app.lang() : vlang(f);
         if (lang.equals("en") && !app.lang().equals("en")) lang = app.lang();
         final String lg = lang, name = Player.videoName(f);
-        Ui.toast(this, "Asking the PC to transcribe it…");
+        Ui.toast(this, "Asking the PC…");
         app.bg(() -> {
             try {
                 Map<String, Object> body = new java.util.LinkedHashMap<>();
                 body.put("lang", lg); body.put("video", name);
                 Map<String, Object> r = pc.post("/api/pocket/transcribe", body, 60000);
-                boolean told = false;
-                for (int i = 0; i < 270; i++) {                                    // up to 90 minutes
-                    String st = Json.str(r.get("state"), "none");
-                    if (st.equals("missing")) { String why = Json.str(r.get("error"), "The PC does not have this video."); app.post(() -> Ui.alert(this, "Not on the PC", why)); return; }
-                    if (st.equals("ready")) {
-                        List<Object> subs = Json.arr(r.get("subs"));
-                        if (subs.isEmpty()) break;
-                        Map<String, Object> x = Json.obj(subs.get(0));
-                        String ext = Json.str(x.get("name"), ".srt").replaceAll("^.*(\\.[A-Za-z0-9]+)$", "$1");
-                        String stem = Player.niceName(f);
-                        File dest = new File(app.videoDir(), stem + "." + lg + ext);
-                        for (int k = 2; dest.exists(); k++) dest = new File(app.videoDir(), stem + "." + lg + k + ext);
-                        pc.download("/api/pocket/file?id=" + PcLink.enc(Json.str(x.get("id"), "")), dest, null);
-                        if (vlang(f).isEmpty()) setVideoLang(f, lg);
-                        File saved = dest;
-                        app.post(() -> { Ui.toast(this, "Subtitles from the PC: " + saved.getName()); show(); });
-                        return;
-                    }
-                    if (!told) { told = true; app.post(() -> Ui.toast(this, "The PC is transcribing (a few minutes for an episode). The subtitles arrive by themselves while the app is open.")); }
-                    try { Thread.sleep(20000); } catch (InterruptedException ie) { return; }
-                    r = pc.get("/api/pocket/transcribe?lang=" + PcLink.enc(lg) + "&video=" + PcLink.enc(name), 30000);
+                if (Json.str(r.get("state"), "").equals("missing")) {
+                    app.post(() -> Ui.dialog(this).setTitle("The PC does not have this video")
+                            .setMessage("Send only its sound? It is made small first (mono, a low bit rate: an hour is about 11 MB) and the PC listens to it with Whisper. The picture stays on the phone.")
+                            .setPositiveButton("Send the sound", (d, w) -> sendSound(f, pc, lg, name)).setNegativeButton("Cancel", null).show());
+                    return;
                 }
-                app.post(() -> Ui.alert(this, "Still working", "The PC has not finished yet. Open this menu again later: the subtitles are fetched when they are there."));
+                waitForWhisper(f, pc, lg, name, r);
             } catch (IOException ex) { app.post(() -> Ui.alert(this, "Could not ask the PC", explain(ex))); }
         });
+    }
+
+    /** Sound of the video, small, to the PC (which starts Whisper on it). */
+    private void sendSound(File f, PcLink pc, String lg, String name) {
+        Ui.toast(this, "Making the sound small…");
+        app.bg(() -> {
+            File small = null;
+            try {
+                small = MediaCut.smallAudio(this, Player.videoUri(f), getCacheDir(), "send_" + System.currentTimeMillis(), p -> app.post(() -> status.setText("preparing the sound… " + Math.round(p * 100) + " %")));
+                final File sf = small;
+                app.post(() -> Ui.toast(this, "Sending " + (sf.length() / 1024 / 1024 + 1) + " MB to the PC…"));
+                Map<String, Object> r = pc.upload("/api/pocket/audio?lang=" + PcLink.enc(lg) + "&video=" + PcLink.enc(name), small, new PcLink.Bytes() {
+                    @Override public void progress(long done, long total) { app.post(() -> status.setText("sending the sound… " + (total > 0 ? Math.round(100.0 * done / total) : 0) + " %")); }
+                    @Override public boolean cancelled() { return false; }
+                });
+                app.post(() -> status.setText(""));
+                waitForWhisper(f, pc, lg, name, r);
+            } catch (IOException ex) { app.post(() -> Ui.alert(this, "Could not send the sound", explain(ex))); }
+            finally { if (small != null) //noinspection ResultOfMethodCallIgnored
+                small.delete(); }
+        });
+    }
+
+    private void waitForWhisper(File f, PcLink pc, String lg, String name, Map<String, Object> first) throws IOException {
+        Map<String, Object> r = first;
+        boolean told = false;
+        for (int i = 0; i < 270; i++) {                                    // up to 90 minutes
+            String st = Json.str(r.get("state"), "none");
+            if (st.equals("missing")) { String why = Json.str(r.get("error"), "The PC does not have this video."); app.post(() -> Ui.alert(this, "Not on the PC", why)); return; }
+            if (st.equals("ready")) {
+                List<Object> subs = Json.arr(r.get("subs"));
+                if (subs.isEmpty()) break;
+                Map<String, Object> x = Json.obj(subs.get(0));
+                String ext = Json.str(x.get("name"), ".srt").replaceAll("^.*(\\.[A-Za-z0-9]+)$", "$1");
+                String stem = Player.niceName(f);
+                File dest = new File(app.videoDir(), stem + "." + lg + ext);
+                for (int k = 2; dest.exists(); k++) dest = new File(app.videoDir(), stem + "." + lg + k + ext);
+                pc.download("/api/pocket/file?id=" + PcLink.enc(Json.str(x.get("id"), "")), dest, null);
+                if (vlang(f).isEmpty()) setVideoLang(f, lg);
+                File saved = dest;
+                app.post(() -> { Ui.toast(this, "Subtitles from the PC: " + saved.getName()); show(); });
+                return;
+            }
+            if (!told) { told = true; app.post(() -> Ui.toast(this, "The PC is transcribing (a few minutes for an episode). The subtitles arrive by themselves while the app is open.")); }
+            try { Thread.sleep(20000); } catch (InterruptedException ie) { return; }
+            r = pc.get("/api/pocket/transcribe?lang=" + PcLink.enc(lg) + "&video=" + PcLink.enc(name), 30000);
+        }
+        app.post(() -> Ui.alert(this, "Still working", "The PC has not finished yet. Open this menu again later: the subtitles are fetched when they are there."));
     }
 
     private void getSub(File f, String lang, Map<String, Object> item, Shows.Ep e) {
