@@ -119,6 +119,47 @@ public class CoreTest {
       Map<String, Object> bk = new java.util.LinkedHashMap<>();
       check("meta: the book's own details fill empty fields only", Meta.fromEpub(bk, m, 1) && !Meta.fromEpub(bk, m, 2) && bk.get("creator") != null, bk.toString());
     }
+    {
+      int ssr = 8000; short[] sa = new short[ssr * 2];
+      for (int i = ssr / 2; i < ssr + ssr / 2; i++) sa[i] = (short) (Math.sin(i * 0.2) * 9000);
+      SoundTools.Opts o = new SoundTools.Opts(); o.trim = true; o.normalise = true; o.fadeMs = 20;
+      short[] r = SoundTools.process(sa, ssr, o);
+      int pk = 0; for (short q : r) pk = Math.max(pk, Math.abs(q));
+      check("sound: silence at both ends trimmed (about 1 s + 2 x 80 ms)", r.length > ssr + ssr / 10 && r.length < ssr + ssr / 4, "" + r.length);
+      check("sound: normalised to ~90 %", pk > 28000 && pk <= 29500, "" + pk);
+      check("sound: fades start and end at zero", r[0] == 0 && Math.abs(r[r.length - 1]) <= 1, "" + r[0]);
+      int[] rt = new int[1]; short[] back = SoundTools.readWav(SoundTools.wav(r, ssr), rt);
+      check("sound: wav round trip", back != null && back.length == r.length && rt[0] == ssr && back[100] == r[100], "");
+      check("sound: all-quiet sound is left alone", SoundTools.trim(new short[ssr], ssr, 80).length == ssr, "");
+    }
+    {
+      check("subsearch: episode name in a zip", SubSearch.matchesEpisode("show.s02e05.720p.srt", 2, 5) && !SubSearch.matchesEpisode("show.s02e06.srt", 2, 5) && SubSearch.matchesEpisode("show 2x05.srt", 2, 5), "");
+    }
+    {
+      java.io.File bka = java.nio.file.Files.createTempDirectory("bk_a").toFile(), bkb = java.nio.file.Files.createTempDirectory("bk_b").toFile();
+      java.nio.file.Files.write(new java.io.File(bka, "it.json").toPath(), "{\"known\":[\"ciao\"]}".getBytes());
+      Map<String, Object> pr = new java.util.LinkedHashMap<>();
+      pr.put("lang", "it"); pr.put("n", 5); pr.put("on", true); pr.put("sp", 1.25f); pr.put("big", 12345678901L);
+      pr.put("set", new java.util.TreeSet<>(java.util.Arrays.asList("x", "y")));
+      java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+      Map<String, java.io.File> fa = new java.util.LinkedHashMap<>(); fa.put("words", bka);
+      int nf = Backup.write(bo, pr, fa);
+      Map<String, java.io.File> fb = new java.util.LinkedHashMap<>(); fb.put("words", bkb);
+      Backup.Result bres = Backup.read(new java.io.ByteArrayInputStream(bo.toByteArray()), fb, null);
+      check("backup: files and settings come back", nf == 1 && bres.files == 1 && new String(java.nio.file.Files.readAllBytes(new java.io.File(bkb, "it.json").toPath())).contains("ciao")
+          && bres.prefs.size() == 6 && bres.prefs.get("sp").type.equals("f") && bres.prefs.get("on").value.equals(Boolean.TRUE), bres.prefs.toString());
+      boolean bad = false;
+      try { Backup.read(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}), fb, null); } catch (java.io.IOException e) { bad = true; }
+      check("backup: something else than a backup is refused", bad, "");
+    }
+    {
+      Book rb = Book.fromText("Ciao amico mio. Il gatto dorme qui sempre. Si!\n\nOggi mangio la pizza xyzzy.", "T");
+      java.util.Set<String> unk = new java.util.HashSet<>(java.util.Arrays.asList("gatto", "xyzzy"));
+      java.util.List<Rating.Row> rr = Rating.rate(rb, xw -> xw.equals("si") ? 0 : unk.contains(xw) ? 2 : 1);
+      Rating.Row tot = rr.get(0);
+      check("rating: words known % and whole sentences known", tot.words == 13 && tot.unknownWords == 2 && tot.wordsPct() == 85 && tot.sentences == 3 && tot.knownSentences == 1 && tot.sentencesPct() == 33,
+          tot.words + " " + tot.unknownWords + " " + tot.sentences + " " + tot.knownSentences);
+    }
     System.out.println(fails == 0 ? "all passed" : fails + " FAILED");
     System.exit(fails == 0 ? 0 : 1);
   }

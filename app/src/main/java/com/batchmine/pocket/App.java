@@ -66,6 +66,9 @@ public final class App extends Application {
 
     public WordStore store() { return store(lang()); }
 
+    /** After a restore: the word files are read again from disk. */
+    public synchronized void forgetStores() { stores.clear(); }
+
     public PcLink pc() { return PcLink.parse(prefs().getString("pc_link", "")); }
 
     public File dir(String name) { File f = new File(getFilesDir(), name); f.mkdirs(); return f; }

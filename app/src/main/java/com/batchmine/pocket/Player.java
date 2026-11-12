@@ -12,6 +12,7 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.VideoView;
@@ -307,8 +308,15 @@ public final class Player extends Activity {
         ctl.addView(br);
         tl = new Timeline(this);
         tl.onSeek(ms -> { dragging = false; video.seekTo(ms); shown = -2; primeLine = -1; primePhase = ""; loopUntil = -1; }, () -> dragging = true);
+        tl.onScrub(this::scrub);
         ctl.addView(tl, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 40)));
+        prev = new ImageView(this);
+        prev.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        prev.setBackground(Ui.round(0xFF000000, Ui.dp(this, 8)));
+        prev.setClipToOutline(true);
+        prev.setVisibility(View.GONE);
         root.addView(ctl, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
+        root.addView(prev, new FrameLayout.LayoutParams(Ui.dp(this, 176), Ui.dp(this, 99), Gravity.BOTTOM | Gravity.START));
         // the subtitles sit just above the controls, whatever the height of those is (taller on a phone held upright)
         ctl.addOnLayoutChangeListener((vw, l, t, r, b, ol, ot, orr, ob) -> {
             if (!uiOn && !stacked) return;
@@ -341,10 +349,7 @@ public final class Player extends Activity {
             tick();
         });
         queue = getIntent().getStringArrayExtra("queue");
-        video.setOnCompletionListener(mp -> {
-            app.prefs().edit().putBoolean("vdone_" + file.getName(), true).putFloat("vpos_" + file.getName(), 0).putLong("vpost_" + file.getName(), System.currentTimeMillis()).apply();
-            playNextInQueue();
-        });
+        video.setOnCompletionListener(mp -> finishVideo());
         video.setOnErrorListener((mp, w, e) -> { Ui.alert(this, "Cannot play this video", "The phone could not play " + file.getName() + (file.getName().endsWith(".vlink") ? " (if you moved or deleted the video, add it again)" : "") + ". MP4 (H.264) works everywhere; other formats depend on the phone."); return true; });
     }
 
@@ -771,10 +776,12 @@ public final class Player extends Activity {
         l.addView(menuRow("Copy the line", "", false, () -> copyLine(Subs.around(main, video.getCurrentPosition() / 1000.0 - delay)), d));
         l.addView(menuHead("Lists"));
         l.addView(menuRow("All lines", main.size() + "", false, this::linesDialog, d));
+        l.addView(menuRow("Intro, credits, gaps, fast lines…", "", false, this::linesTools, d));
         l.addView(menuHead("Cards from many lines"));
         l.addView(menuRow("From the lines marked with ★…", "", false, () -> cardTool("marked"), d));
         l.addView(menuRow("From the unknown words…", "", false, () -> cardTool("words"), d));
         l.addView(menuRow("Lines with exactly one unknown word…", "", false, () -> cardTool("one"), d));
+        l.addView(menuRow("Card tray", Tray.count() + " waiting", false, () -> Tray.show(this, null), d));
         l.addView(menuHead("Picture and text"));
         if (port) l.addView(menuRow("Video on top, the lines below", "", app.prefs().getBoolean("player_stack", true), () -> action("layout"), d));
         l.addView(menuRow("Subtitle timing…", delay == 0 ? "" : String.format(Locale.ROOT, "%+.1f s", delay), false, this::delayDialog, d));
@@ -845,7 +852,7 @@ public final class Player extends Activity {
         if (mpl == null || android.os.Build.VERSION.SDK_INT < 23) return;
         try {
             boolean playing = video.isPlaying();
-            mpl.setPlaybackParams(mpl.getPlaybackParams().setSpeed(speed));
+            mpl.setPlaybackParams(mpl.getPlaybackParams().setSpeed(effSpeed > 0 ? effSpeed : speed));
             if (!playing) video.pause();           // setting the speed can start the playback
         } catch (RuntimeException e) { Ui.toast(this, "This phone cannot change the speed of this video"); }
     }
@@ -988,6 +995,134 @@ public final class Player extends Activity {
 
     private boolean tickFailed;
 
+    // ---- tools that work on many lines at once: intro / credits, fast lines, gaps, the picture under the finger on the timeline ----
+
+    private float effSpeed = -1;
+    private boolean introDone, outDone;
+    private long gapCool;
+    private ImageView prev;
+    private volatile int scrubWant = -1;
+    private android.media.MediaMetadataRetriever scrubR;
+    private final java.util.concurrent.ExecutorService scrubEx = java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    private String showKey() { String sh = epOf(file).show; return sh.isEmpty() ? "" : com.batchmine.pocket.core.Shows.key(sh); }
+
+    private void finishVideo() {
+        app.prefs().edit().putBoolean("vdone_" + file.getName(), true).putFloat("vpos_" + file.getName(), 0).putLong("vpost_" + file.getName(), System.currentTimeMillis()).apply();
+        playNextInQueue();
+    }
+
+    private void manyLines(int i, double t, int pos) {
+        android.content.SharedPreferences pr = app.prefs();
+        String sk = showKey();
+        if (!sk.isEmpty() && !dragging) {
+            float in = pr.getFloat("skipin_" + sk, 0), out = pr.getFloat("skipout_" + sk, 0);
+            if (!introDone) { introDone = true; if (in > 0 && pos < in * 1000 - 500) { video.seekTo((int) (in * 1000)); shown = -2; return; } }
+            int dur = video.getDuration();
+            if (!outDone && out > 0 && dur > 0 && pos >= dur - out * 1000 && video.isPlaying()) {
+                outDone = true;
+                if (queue != null && queue.length > 0) finishVideo(); else video.seekTo(Math.max(0, dur - 1000));
+                return;
+            }
+        }
+        float slow = pr.getFloat(lk("slowfast"), 0), want = speed;
+        if (slow > 0 && i >= 0 && loopUntil < 0) {
+            Subs.Cue c = main.get(i);
+            double len = Math.max(0.3, c.end - c.start);
+            if (c.text.replaceAll("<[^>]*>|\\s+", "").length() / len > slow) want = Math.max(0.25f, speed * pr.getFloat(lk("slowfactor"), 0.8f));
+        }
+        if (Math.abs(want - effSpeed) > 0.001f && !(effSpeed < 0 && want == speed)) { effSpeed = want; applySpeed(); }
+        if (pr.getBoolean(lk("gapskip"), false) && i < 0 && !main.isEmpty() && loopUntil < 0 && !prime && video.isPlaying() && System.currentTimeMillis() > gapCool) {
+            double tt = t - delay, gap = pr.getFloat(lk("gapmin"), 2f);
+            for (int n = Math.max(0, lastLine - 1); n < main.size(); n++) {
+                double st = main.get(n).start;
+                if (st > tt) {
+                    if (st - tt > gap) { gapCool = System.currentTimeMillis() + 1500; video.seekTo((int) ((st + delay - 0.4) * 1000)); }
+                    break;
+                }
+            }
+        }
+    }
+
+    private void scrub(int ms) {
+        scrubWant = ms;
+        if (ms < 0) { prev.setVisibility(View.GONE); return; }
+        int w = Math.max(1, tl.getWidth()), dur = Math.max(1, video.getDuration());
+        float x = (float) ms / dur * w - prev.getLayoutParams().width / 2f;
+        prev.setTranslationX(Math.max(0, Math.min(w - prev.getLayoutParams().width, x)));
+        ((FrameLayout.LayoutParams) prev.getLayoutParams()).bottomMargin = ctl.getHeight() + Ui.dp(this, 8);
+        prev.requestLayout();
+        prev.setVisibility(View.VISIBLE);
+        scrubEx.execute(() -> {
+            if (scrubWant != ms) return;
+            try {
+                if (scrubR == null) { scrubR = new android.media.MediaMetadataRetriever(); scrubR.setDataSource(this, videoUri(file)); }
+                android.graphics.Bitmap b = scrubR.getFrameAtTime(ms * 1000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                if (b == null) return;
+                if (b.getWidth() > 352) b = android.graphics.Bitmap.createScaledBitmap(b, 352, Math.max(1, Math.round(b.getHeight() * 352f / b.getWidth())), true);
+                android.graphics.Bitmap fb = b;
+                if (scrubWant == ms) runOnUiThread(() -> prev.setImageBitmap(fb));
+            } catch (RuntimeException e) { /* a video the phone cannot cut pictures from: no preview */ }
+        });
+    }
+
+    private TextView toolChip(String label, boolean on, Runnable then) {
+        TextView t = Ui.text(this, label, 15, on ? Ui.ON_ACC : Ui.TEXT);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(Ui.dp(this, 14), Ui.dp(this, 9), Ui.dp(this, 14), Ui.dp(this, 9));
+        t.setBackground(Ui.round(on ? Ui.ACCENT : Ui.mix(Ui.BG, Ui.TEXT, 0.10f), Ui.dp(this, 99)));
+        if (on) t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        t.setOnClickListener(x -> then.run());
+        return t;
+    }
+
+    private void linesTools() {
+        android.content.SharedPreferences pr = app.prefs();
+        String sk = showKey();
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 16));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        double now = video.getCurrentPosition() / 1000.0;
+        if (!sk.isEmpty()) {
+            float in = pr.getFloat("skipin_" + sk, 0), out = pr.getFloat("skipout_" + sk, 0);
+            l.addView(menuHead("Every episode of " + epOf(file).show));
+            l.addView(menuRow("The intro ends here (" + Ui.time(now) + ")", in > 0 ? "now at " + Ui.time(in) : "", false,
+                    () -> { pr.edit().putFloat("skipin_" + sk, (float) now).apply(); Ui.toast(this, "The intro is skipped from now on"); }, d));
+            l.addView(menuRow("The credits start here", out > 0 ? Ui.time(out) + " before the end" : "", false, () -> {
+                double left = (video.getDuration() - video.getCurrentPosition()) / 1000.0;
+                if (left < 3) Ui.toast(this, "Go to where the credits begin first");
+                else { pr.edit().putFloat("skipout_" + sk, (float) left).apply(); Ui.toast(this, "The credits are skipped from now on"); }
+            }, d));
+            if (in > 0 || out > 0) l.addView(menuRow("Forget intro and credits", "", false, () -> pr.edit().remove("skipin_" + sk).remove("skipout_" + sk).apply(), d));
+        } else l.addView(Ui.hint(this, "Intro and credits skipping works for videos named like a series (Show S01E02)."));
+        l.addView(menuHead("Slow down fast lines"));
+        l.addView(Ui.hint(this, "Lines with more characters per second than this play slower. Counted per language."));
+        Flow f = new Flow(this, 8);
+        float cur = pr.getFloat(lk("slowfast"), 0);
+        float[] cps = {0, 13, 16, 19, 23};
+        for (float c : cps) f.addView(toolChip(c == 0 ? "Off" : (int) c + "/s", c == cur, () -> { pr.edit().putFloat(lk("slowfast"), c).apply(); Ui.dismiss(d[0]); linesTools(); }));
+        l.addView(f);
+        if (cur > 0) {
+            l.addView(menuHead("…to this much of your speed"));
+            Flow g = new Flow(this, 8);
+            float fc = pr.getFloat(lk("slowfactor"), 0.8f);
+            for (float x : new float[]{0.9f, 0.8f, 0.7f, 0.6f}) g.addView(toolChip(String.valueOf(x).replace('.', ','), Math.abs(x - fc) < 0.01f, () -> { pr.edit().putFloat(lk("slowfactor"), x).apply(); effSpeed = -1; Ui.dismiss(d[0]); linesTools(); }));
+            l.addView(g);
+        }
+        l.addView(menuHead("Gaps between lines"));
+        LinearLayout grp = Ui.group(this);
+        Ui.switchRow(grp, "Skip the silence between lines", "Jumps to just before the next line.", pr.getBoolean(lk("gapskip"), false),
+                (b, on) -> pr.edit().putBoolean(lk("gapskip"), on).apply());
+        l.addView(grp);
+        l.addView(Ui.hint(this, "Only gaps longer than:"));
+        Flow gg = new Flow(this, 8);
+        float gm = pr.getFloat(lk("gapmin"), 2f);
+        for (float x : new float[]{1.5f, 2f, 3f, 5f, 8f}) gg.addView(toolChip(String.valueOf(x).replace('.', ',').replace(",0", "") + " s", Math.abs(x - gm) < 0.01f, () -> { pr.edit().putFloat(lk("gapmin"), x).apply(); Ui.dismiss(d[0]); linesTools(); }));
+        l.addView(gg);
+        l.addView(Ui.hint(this, "Drag along the timeline to see the picture under your finger."));
+        d[0] = Ui.sheet(this, "Many lines", Ui.scroll(this, l), true);
+    }
+
     private void tick() {
         if (isFinishing() || video == null) return;
         try {
@@ -1007,6 +1142,7 @@ public final class Player extends Activity {
                 else loopUntil = -1;                           // played as often as asked: on with the film
             }
             int i = Subs.at(main, t - delay);
+            manyLines(i, t, pos);
             if (prime && loopUntil < 0) primeStep(i, t);
             if (i != shown) { shown = i; showLine(i); }
             if (needsCounts()) qualify(Math.max(0, i));
@@ -1427,6 +1563,8 @@ public final class Player extends Activity {
     @Override protected void onDestroy() {
         super.onDestroy();
         h.removeCallbacksAndMessages(null);
+        scrubEx.execute(() -> { try { if (scrubR != null) scrubR.release(); } catch (Exception ignored) { } });
+        scrubEx.shutdown();
         if (session != null) { session.setActive(false); session.release(); session = null; }
         try { unregisterReceiver(noisy); } catch (RuntimeException ignored) { }
     }

@@ -106,6 +106,12 @@ public final class Cards {
 
     public static void make(Activity a, Request r, Runnable done) {
         App app = App.get();
+        if (Tray.on() && !Tray.sending) {
+            Tray.add(r);
+            Ui.toast(a, "Card for “" + r.word + "” is in the tray (" + Tray.count() + ")");
+            if (done != null) done.run();
+            return;
+        }
         WordStore ws = app.store(r.lang);
         if (!useAnki()) { keepForPc(a, r, done, null); return; }
         if (!AnkiDroid.installed(a)) { keepForPc(a, r, done, "AnkiDroid is not installed"); return; }
@@ -151,9 +157,15 @@ public final class Cards {
                 }
                 if (r.kind.equals("video") && !r.video.isEmpty()) {
                     Uri u = Uri.parse(r.video);
-                    double pad = p.getInt("pad_ms", 250) / 1000.0;
+                    double padB = p.getInt("padb_ms", p.getInt("pad_ms", 250)) / 1000.0, padA = p.getInt("pada_ms", p.getInt("pad_ms", 250)) / 1000.0;
                     if (map.containsKey("audio")) {
-                        File au = MediaCut.audio(a, u, Math.max(0, r.start - pad), r.end + pad, dir, stem);
+                        com.batchmine.pocket.core.SoundTools.Opts so = soundOpts(p);
+                        File au = null;
+                        if (so.any()) {
+                            try { au = MediaCut.audioTuned(a, u, Math.max(0, r.start - padB), r.end + padA, dir, stem, so); }
+                            catch (java.io.IOException ignored) { /* the phone cannot decode this sound: the line is copied as it is */ }
+                        }
+                        if (au == null) au = MediaCut.audio(a, u, Math.max(0, r.start - padB), r.end + padA, dir, stem);
                         v.put("audio", AnkiDroid.addMedia(a, au, true));
                     }
                     if (map.containsKey("picture")) {
@@ -176,6 +188,14 @@ public final class Cards {
                         .setNegativeButton("Cancel", null).show());
             }
         });
+    }
+
+    static com.batchmine.pocket.core.SoundTools.Opts soundOpts(SharedPreferences p) {
+        com.batchmine.pocket.core.SoundTools.Opts o = new com.batchmine.pocket.core.SoundTools.Opts();
+        o.normalise = p.getBoolean("snd_norm", false);
+        o.trim = p.getBoolean("snd_trim", false);
+        o.fadeMs = p.getInt("snd_fade", 0);
+        return o;
     }
 
     static void keepForPc(Activity a, Request r, Runnable done, String why) {

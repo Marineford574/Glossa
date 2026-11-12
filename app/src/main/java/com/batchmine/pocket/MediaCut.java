@@ -51,6 +51,36 @@ public final class MediaCut {
         }
     }
 
+    /** Like audio(), but decoded and tidied (silence trimmed, volume evened, fades) and kept as a .wav. */
+    public static File audioTuned(Context c, Uri video, double start, double end, File dir, String base, com.batchmine.pocket.core.SoundTools.Opts o) throws IOException {
+        MediaExtractor ex = new MediaExtractor();
+        try {
+            ex.setDataSource(c, video, null);
+            int track = -1;
+            MediaFormat fmt = null;
+            for (int i = 0; i < ex.getTrackCount(); i++) {
+                MediaFormat f = ex.getTrackFormat(i);
+                String m = f.getString(MediaFormat.KEY_MIME);
+                if (m != null && m.startsWith("audio/")) { track = i; fmt = f; break; }
+            }
+            if (track < 0) throw new IOException("the video has no sound");
+            ex.selectTrack(track);
+            File w = toWav(ex, fmt, start, end, new File(dir, base + ".wav"));
+            byte[] d = java.nio.file.Files.readAllBytes(w.toPath());
+            int[] rate = new int[1];
+            short[] pcm = com.batchmine.pocket.core.SoundTools.readWav(d, rate);
+            if (pcm != null) {
+                byte[] out = com.batchmine.pocket.core.SoundTools.wav(com.batchmine.pocket.core.SoundTools.process(pcm, rate[0], o), rate[0]);
+                java.nio.file.Files.write(w.toPath(), out);
+            }
+            return w;
+        } catch (RuntimeException e) {
+            throw new IOException("could not tidy the sound: " + e.getMessage());
+        } finally {
+            ex.release();
+        }
+    }
+
     /** The sound from START to END seconds into DIR/BASE.m4a or .webm. */
     public static File audio(Context c, Uri video, double start, double end, File dir, String base) throws IOException {
         MediaExtractor ex = new MediaExtractor();

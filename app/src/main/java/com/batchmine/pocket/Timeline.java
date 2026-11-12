@@ -15,6 +15,7 @@ final class Timeline extends View {
     private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
     private Seek seek;
     private Runnable onDragStart;
+    private Seek scrub;                                         // while the finger is down: the time under it (ms), -1 when it lifts
 
     Timeline(Context c) {
         super(c);
@@ -22,6 +23,7 @@ final class Timeline extends View {
     }
 
     void onSeek(Seek s, Runnable start) { seek = s; onDragStart = start; }
+    void onScrub(Seek s) { scrub = s; }
     boolean dragging() { return dragX >= 0; }
     void set(int posMs, int maxMs) { max = Math.max(1, maxMs); pos = Math.max(0, Math.min(max, posMs)); if (dragX < 0) invalidate(); }
 
@@ -33,17 +35,19 @@ final class Timeline extends View {
                 getParent().requestDisallowInterceptTouchEvent(true);
                 dragX = e.getX();
                 if (onDragStart != null) onDragStart.run();
+                if (scrub != null) scrub.to(at(dragX));
                 invalidate();
                 return true;
-            case MotionEvent.ACTION_MOVE: dragX = e.getX(); invalidate(); return true;
+            case MotionEvent.ACTION_MOVE: dragX = e.getX(); if (scrub != null) scrub.to(at(dragX)); invalidate(); return true;
             case MotionEvent.ACTION_UP:
                 int to = at(e.getX());
                 dragX = -1;
+                if (scrub != null) scrub.to(-1);
                 pos = to;
                 if (seek != null) seek.to(to);
                 invalidate();
                 return true;
-            case MotionEvent.ACTION_CANCEL: dragX = -1; invalidate(); return true;
+            case MotionEvent.ACTION_CANCEL: dragX = -1; if (scrub != null) scrub.to(-1); invalidate(); return true;
         }
         return super.onTouchEvent(e);
     }

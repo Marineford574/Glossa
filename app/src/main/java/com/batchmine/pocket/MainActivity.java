@@ -37,7 +37,7 @@ import java.util.Map;
 
 /** The main screen: Home (continue, shelves), Books, Videos, Words and Settings, with the language and the sync button on top. */
 public final class MainActivity extends Activity {
-    static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3, REQ_PHOTO = 4, REQ_VFOLDER = 5, REQ_BFOLDER = 6;
+    static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3, REQ_PHOTO = 4, REQ_VFOLDER = 5, REQ_BFOLDER = 6, REQ_BACKUP = 11, REQ_RESTORE = 12;
     private App app;
     private FrameLayout body;
     private TextView langBtn, status;
@@ -131,6 +131,7 @@ public final class MainActivity extends Activity {
         if (t == null) return;
         String text = t.toString().trim().replaceAll("\\s+", " ");
         if (text.isEmpty() || text.length() > 2000) return;
+        if (text.matches("https?://\\S+")) { askDownload(text); return; }
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("[\\p{L}][\\p{L}'’-]*").matcher(text);
         if (!m.find()) return;
         Cards.Request r = new Cards.Request();
@@ -140,6 +141,57 @@ public final class MainActivity extends Activity {
         r.title = "shared text";
         String w = m.group();
         body.post(() -> WordSheet.show(this, app.lang(), w, r, this::show));
+    }
+
+    /** A web address shared to the app: the PC downloads the video with yt-dlp, then the phone fetches it (and its subtitles, when there are some). */
+    private void askDownload(String url) {
+        if (app.pc() == null) { Ui.toast(this, "Paste the PC link in Settings first: the PC downloads videos for the phone"); return; }
+        Ui.dialog(this).setTitle("Get this video?")
+                .setMessage(url + "\n\nThe PC downloads it (yt-dlp, up to 720p) and the phone copies it into the app, with subtitles in " + app.lang().toUpperCase(Locale.ROOT) + " when the site has them.")
+                .setPositiveButton("Download", (d, w) -> downloadFromLink(url, app.lang()))
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private void downloadFromLink(String url, String lg) {
+        PcLink pc = app.pc();
+        Ui.toast(this, "Asking the PC…");
+        app.bg(() -> {
+            try {
+                Map<String, Object> body = new java.util.LinkedHashMap<>();
+                body.put("lang", lg); body.put("url", url);
+                Map<String, Object> r = pc.post("/api/pocket/download", body, 30000);
+                for (int i = 0; i < 720 && Json.str(r.get("state"), "").equals("working"); i++) {      // up to an hour
+                    app.post(() -> status.setText("the PC is downloading the video…"));
+                    try { Thread.sleep(5000); } catch (InterruptedException ie) { return; }
+                    r = pc.get("/api/pocket/download?lang=" + PcLink.enc(lg) + "&url=" + PcLink.enc(url), 30000);
+                }
+                String st = Json.str(r.get("state"), "");
+                if (st.equals("error")) { String why = Json.str(r.get("error"), "?"); app.post(() -> { status.setText(""); Ui.alert(this, "The PC could not download it", why); }); return; }
+                if (!st.equals("ready")) { app.post(() -> { status.setText(""); Ui.alert(this, "Still working", "The PC has not finished. Share the link again later: it continues, and the phone then fetches it."); }); return; }
+                int n = 0;
+                for (Object o : Json.arr(r.get("files"))) {
+                    Map<String, Object> x = Json.obj(o);
+                    String name = Json.str(x.get("name"), "video.mp4").replaceAll("[\\\\/:*?\"<>|]+", "_");
+                    File dest = new File(app.videoDir(), name);
+                    for (int k = 2; dest.exists(); k++) dest = new File(app.videoDir(), name.replaceAll("(\\.[^.]+)$", " " + k + "$1"));
+                    final File fd = dest;
+                    app.post(() -> status.setText("fetching " + fd.getName() + "…"));
+                    pc.download("/api/pocket/file?id=" + PcLink.enc(Json.str(x.get("id"), "")), dest, null);
+                    setVideoLang(dest, lg);
+                    String stem = dest.getName().replaceAll("\\.[^.]+$", "");
+                    for (Object so : Json.arr(x.get("subs"))) {
+                        Map<String, Object> sx = Json.obj(so);
+                        String ext = Json.str(sx.get("name"), ".srt").replaceAll("^.*(\\.[A-Za-z0-9]+)$", "$1");
+                        File sd = new File(app.videoDir(), stem + "." + lg + ext);
+                        for (int k = 2; sd.exists(); k++) sd = new File(app.videoDir(), stem + "." + lg + k + ext);
+                        pc.download("/api/pocket/file?id=" + PcLink.enc(Json.str(sx.get("id"), "")), sd, null);
+                    }
+                    n++;
+                }
+                int got = n;
+                app.post(() -> { status.setText(""); Ui.toast(this, got + " video" + (got == 1 ? "" : "s") + " added to Videos"); show(); });
+            } catch (IOException ex) { app.post(() -> { status.setText(""); Ui.alert(this, "Could not get the video", explain(ex)); }); }
+        });
     }
 
     /** The saved report of a crash, to copy and send. */
@@ -418,6 +470,7 @@ public final class MainActivity extends Activity {
             nums.addView(Ui.weight(t, 1));
         }
         Ui.add(l, nums, 14);
+        Ui.add(l, Ui.item(this, "Look up a sentence", "Type or paste a sentence, tap a word: your dictionaries, and other sentences with it to mine.", v -> Lookup.open(this, null)), 14);
         if (app.pc() == null) {
             Ui.add(l, Ui.item(this, "Link the PC", "Paste the link from Glossa on the PC (Settings → Phone access) to exchange words, cards and where you stopped.", v -> { toSettings(); }), 14);
         }
@@ -851,7 +904,27 @@ public final class MainActivity extends Activity {
             if (!bookTagFilter.isEmpty() && !used.contains(bookTagFilter)) bookTagFilter = "";
             if (!used.isEmpty()) l.addView(Details.filterBar(this, used, bookTagFilter, t -> { bookTagFilter = t; show(); }));
         }
+        if (!books.isEmpty()) {
+            int[] cnt = new int[3];
+            for (BookInfo bk : books) cnt[shelfOf(bk.id)]++;
+            Flow sh = new Flow(this, 8);
+            String[] shNames = {"Reading", "Finished", "Put away"};
+            for (int i = 0; i < 3; i++) {
+                final int at = i;
+                if (i > 0 && cnt[i] == 0 && bookShelf != i) continue;
+                boolean on = bookShelf == i;
+                TextView c = Ui.text(this, shNames[i] + " " + cnt[i], 14, on ? Ui.ON_ACC : Ui.TEXT);
+                c.setPadding(Ui.dp(this, 14), Ui.dp(this, 8), Ui.dp(this, 14), Ui.dp(this, 8));
+                c.setBackground(Ui.round(on ? Ui.ACCENT : Ui.mix(Ui.BG, Ui.TEXT, 0.10f), Ui.dp(this, 99)));
+                c.setOnClickListener(v -> { bookShelf = at; show(); });
+                sh.addView(c);
+            }
+            Ui.add(l, sh, 8);
+            books = new ArrayList<>(books);
+            java.util.Collections.sort(books, (a, b) -> Long.compare(Math.max(app.prefs().getLong("rt_" + b.id, 0), b.file.lastModified() / 1000), Math.max(app.prefs().getLong("rt_" + a.id, 0), a.file.lastModified() / 1000)));   // the last opened on top
+        }
         for (BookInfo bk : books) {
+            if (shelfOf(bk.id) != bookShelf) continue;
             if (!bookTagFilter.isEmpty() && !Details.hasTag(Details.bookKey(bk.id), bookTagFilter)) continue;
             int[] pos = Reader.position(bk.id);
             String sub = bk.chapters + " chapters" + (pos[0] > 0 || pos[1] > 0 ? " · at chapter " + (pos[0] + 1) : "");
@@ -868,9 +941,84 @@ public final class MainActivity extends Activity {
         return Ui.scroll(this, l);
     }
 
+    // ---- shelves and ratings of books (the PC Reader's, on the phone)
+    private int bookShelf;                                           // 0 reading, 1 finished, 2 put away
+    private final Map<String, Object[]> rateCache = new java.util.HashMap<>();
+
+    private int shelfOf(String id) { return app.prefs().getInt("bshelf_" + id, 0); }
+
+    /** The two counts the person has switched on ("rate_words", "rate_sents", both on by default). */
+    private String rateLine(com.batchmine.pocket.core.Rating.Row r) {
+        boolean w = app.prefs().getBoolean("rate_words", true), s = app.prefs().getBoolean("rate_sents", true);
+        if (!w && !s) return "Ratings are off (tap to turn them on)";
+        if (r.words == 0) return "No words to rate yet";
+        String a = w ? r.wordsPct() + "% of the words known" : "", b = s ? r.sentencesPct() + "% of the sentences known in full (" + r.knownSentences + " of " + r.sentences + ")" : "";
+        return a + (w && s ? "\n" : "") + b;
+    }
+
+    private String rateShort(com.batchmine.pocket.core.Rating.Row r) {
+        boolean w = app.prefs().getBoolean("rate_words", true), s = app.prefs().getBoolean("rate_sents", true);
+        if (r.words == 0 || (!w && !s)) return "–";
+        return (w ? r.wordsPct() + "%" : "") + (w && s ? " · " : "") + (s ? "S " + r.sentencesPct() + "%" : "");
+    }
+
+    /** The rows of a book (whole + chapters); worked out again when the known words or the book change. */
+    private List<com.batchmine.pocket.core.Rating.Row> rateRows(BookInfo bk, Book b) {
+        String lang = bk.lang.isEmpty() ? app.lang() : bk.lang;
+        WordStore ws = app.store(lang);
+        Object stamp = ws.knownCount() + ":" + bk.stamp + ":" + app.dicts.list().size();
+        Object[] hit = rateCache.get(bk.id);
+        if (hit != null && stamp.equals(hit[0])) { @SuppressWarnings("unchecked") List<com.batchmine.pocket.core.Rating.Row> r = (List<com.batchmine.pocket.core.Rating.Row>) hit[1]; return r; }
+        boolean plain = lang.equals("hr");                          // no dictionary list to judge by: counts as read
+        Map<String, Integer> memo = new java.util.HashMap<>();
+        List<com.batchmine.pocket.core.Rating.Row> rows = com.batchmine.pocket.core.Rating.rate(b, w -> {
+            if (plain) return 1;
+            Integer m = memo.get(w);
+            if (m != null) return m;
+            int st;
+            if (ws.isKnown(w)) st = 1;
+            else {
+                java.util.Set<String> c = app.dicts.candidates(w, lang);
+                if (!app.dicts.listed(c, lang)) st = 0;
+                else { st = 2; for (String x : c) if (ws.isKnown(x)) { st = 1; break; } }
+            }
+            memo.put(w, st);
+            return st;
+        });
+        rateCache.put(bk.id, new Object[]{stamp, rows});
+        return rows;
+    }
+
+    private void rateBook(BookInfo bk, java.util.function.Consumer<List<com.batchmine.pocket.core.Rating.Row>> then) {
+        app.bg(() -> {
+            try { List<com.batchmine.pocket.core.Rating.Row> rows = rateRows(bk, Book.read(bk.file)); app.post(() -> then.accept(rows)); }
+            catch (IOException | RuntimeException e) { /* no rating for a book that cannot be read */ }
+        });
+    }
+
+    /** Both counts, each switched on or off by itself, and the numbers of the book. */
+    private void ratingsDialog(BookInfo bk) {
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 16));
+        LinearLayout g = Ui.group(this);
+        Ui.switchRow(g, "% of the words known", "Words you know, of all the words of the book", app.prefs().getBoolean("rate_words", true), (b, on) -> { app.prefs().edit().putBoolean("rate_words", on).apply(); });
+        Ui.switchRow(g, "% of the sentences known in full", "Sentences (3 words or more) where you know every word", app.prefs().getBoolean("rate_sents", true), (b, on) -> { app.prefs().edit().putBoolean("rate_sents", on).apply(); });
+        l.addView(g);
+        TextView t = Ui.text(this, "counting…", 15, Ui.TEXT);
+        t.setPadding(Ui.dp(this, 4), Ui.dp(this, 14), Ui.dp(this, 4), 0);
+        l.addView(t);
+        rateBook(bk, rows -> { com.batchmine.pocket.core.Rating.Row r = rows.get(0); t.setText(r.words == 0 ? "No words to rate yet." : r.wordsPct() + "% of " + r.words + " words known\n" + r.sentencesPct() + "% of " + r.sentences + " sentences known in full"); });
+        Ui.sheet(this, bk.title, Ui.scroll(this, l), false);
+    }
+
     private void bookMenu(BookInfo bk) {
-        Ui.choose(this, bk.title, new String[]{"Rename…", "Delete this book"}, -1, w -> {
+        int sh = shelfOf(bk.id);
+        String[] items = {"Rename…", sh == 1 ? "Back to reading" : "Finished: move to Finished", sh == 2 ? "Back to reading" : "Put away (retire)", "How much can I read? (ratings)…", "Delete this book"};
+        Ui.choose(this, bk.title, items, -1, w -> {
             if (w == 0) renameBook(bk);
+            else if (w == 1) { app.prefs().edit().putInt("bshelf_" + bk.id, sh == 1 ? 0 : 1).apply(); show(); }
+            else if (w == 2) { app.prefs().edit().putInt("bshelf_" + bk.id, sh == 2 ? 0 : 2).apply(); show(); }
+            else if (w == 3) ratingsDialog(bk);
             else Ui.dialog(this).setTitle("Delete “" + bk.title + "”?").setMessage("The book is removed from the phone (the PC keeps its copy).")
                     .setPositiveButton("Delete", (d2, i) -> { bk.file.delete(); openBookId = null; show(); }).setNegativeButton("Keep", null).show();
         });
@@ -916,6 +1064,11 @@ public final class MainActivity extends Activity {
         top.addView(tx, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         hero.addView(top);
         hero.addView(Details.block(this, Details.bookKey(bk.id), "book", bk.title, bk.chapters + " chapters", this::show));
+        TextView rt = Ui.text(this, "", 13, Ui.DIM);
+        rt.setPadding(0, Ui.dp(this, 8), 0, 0);
+        hero.addView(rt);
+        rateBook(bk, rows -> rt.setText(rateLine(rows.get(0))));
+        rt.setOnClickListener(v -> ratingsDialog(bk));
         Ui.add(l, hero, 12);
         Ui.add(l, Ui.primary(this, frac > 0.005f ? "Continue · chapter " + (pos[0] + 1) : "Start reading", v -> openBook(bk)), 8);
         Ui.add(l, Ui.buttons(this, Ui.button(this, "Contents", v -> bookContents(bk)), Ui.button(this, "Rename", v -> renameBook(bk)),
@@ -928,7 +1081,8 @@ public final class MainActivity extends Activity {
             try {
                 Book b = Book.read(bk.file);
                 String[] names = new String[b.chapters.size()];
-                for (int i = 0; i < names.length; i++) names[i] = (i + 1) + ". " + b.chapters.get(i).title;
+                List<com.batchmine.pocket.core.Rating.Row> rows = rateRows(bk, b);
+                for (int i = 0; i < names.length; i++) names[i] = (i + 1) + ". " + b.chapters.get(i).title + (rows == null ? "" : "  ·  " + rateShort(rows.get(i + 1)));
                 app.post(() -> Ui.choose(this, "Contents", names, -1, i -> {
                     app.prefs().edit().putInt("rc_" + bk.id, i).putInt("rp_" + bk.id, 0).apply();
                     openBook(bk);
@@ -1117,7 +1271,6 @@ public final class MainActivity extends Activity {
     /** Subtitles for a video from the internet: the PC does the searching (its sources and keys); the phone keeps the file next to the video. */
     private void findSubs(File f) {
         PcLink pc = app.pc();
-        if (pc == null) { Ui.toast(this, "Paste the PC link in Settings first: the PC searches for the phone"); return; }
         Shows.Ep e = Player.epOf(f);
         String name = vtitle(f);
         String lang = vlang(f).isEmpty() ? app.lang() : vlang(f);
@@ -1126,15 +1279,31 @@ public final class MainActivity extends Activity {
         Ui.toast(this, "Searching for " + lg.toUpperCase(Locale.ROOT) + " subtitles…");
         app.bg(() -> {
             try {
-                String q = "/api/pocket/subsearch?lang=" + PcLink.enc(lg) + "&q=" + PcLink.enc(name)
-                        + (e.episode >= 0 ? "&season=" + Math.max(e.season, 0) + "&episode=" + e.episode : "");
-                Map<String, Object> r = pc.get(q, 60000);
-                List<Object> rs = Json.arr(r.get("results"));
+                Map<String, Object> r;
+                try {
+                    if (pc == null) throw new IOException("no PC");
+                    String q = "/api/pocket/subsearch?lang=" + PcLink.enc(lg) + "&q=" + PcLink.enc(name)
+                            + (e.episode >= 0 ? "&season=" + Math.max(e.season, 0) + "&episode=" + e.episode : "");
+                    r = pc.get(q, 60000);
+                } catch (IOException viaPc) {                     // no PC (or it does not answer): the phone searches by itself
+                    com.batchmine.pocket.core.SubSearch.Query sq = new com.batchmine.pocket.core.SubSearch.Query();
+                    sq.name = com.batchmine.pocket.core.Shows.pretty(name);
+                    if (e.episode >= 0) { sq.season = Math.max(e.season, 0); sq.episode = e.episode; }
+                    List<String> notes = new ArrayList<>();
+                    List<Map<String, Object>> found = com.batchmine.pocket.core.SubSearch.search(sq, lg, app.prefs().getString("subdl_key", ""), notes);
+                    for (Map<String, Object> x : found) x.put("direct", true);
+                    r = new java.util.LinkedHashMap<>();
+                    r.put("results", new ArrayList<Object>(found));
+                    r.put("notes", new ArrayList<Object>(notes));
+                    r.put("has_key", !app.prefs().getString("subdl_key", "").isEmpty());
+                }
+                final Map<String, Object> res = r;
+                List<Object> rs = Json.arr(res.get("results"));
                 app.post(() -> {
                     if (rs.isEmpty()) {
-                        List<Object> notes = Json.arr(r.get("notes"));
+                        List<Object> notes = Json.arr(res.get("notes"));
                         Ui.alert(this, "No subtitles found", "Nothing for “" + name + "” in " + lg.toUpperCase(Locale.ROOT) + (notes.isEmpty() ? "." : ".\n\n" + android.text.TextUtils.join("\n", notes))
-                                + (Json.str(r.get("has_key"), "").equals("false") || Boolean.FALSE.equals(r.get("has_key")) ? "\n\nAdd a SubDL or OpenSubtitles key on the PC (Settings) for more sources." : ""));
+                                + (Json.str(res.get("has_key"), "").equals("false") || Boolean.FALSE.equals(res.get("has_key")) ? "\n\nAdd a SubDL or OpenSubtitles key on the PC (Settings) for more sources." : ""));
                         return;
                     }
                     int n = Math.min(40, rs.size());
@@ -1225,16 +1394,24 @@ public final class MainActivity extends Activity {
 
     private void getSub(File f, String lang, Map<String, Object> item, Shows.Ep e) {
         PcLink pc = app.pc();
-        if (pc == null) return;
+        boolean direct = Boolean.TRUE.equals(item.get("direct"));
+        if (pc == null && !direct) return;
         Ui.toast(this, "Downloading…");
         app.bg(() -> {
             try {
-                Map<String, Object> body = new java.util.LinkedHashMap<>();
-                body.put("item", item);
-                body.put("lang", lang);
-                if (e.episode >= 0) { body.put("season", e.season); body.put("episode", e.episode); }
-                Map<String, Object> r = pc.post("/api/pocket/subget", body, 90000);
-                String text = Json.str(r.get("text"), ""), ext = Json.str(r.get("ext"), ".srt");
+                String text, ext;
+                if (direct) {
+                    String[] ex = new String[1];
+                    text = com.batchmine.pocket.core.SubSearch.fetch(Json.str(item.get("url"), ""), lang, e.episode >= 0 ? Math.max(e.season, 0) : -1, e.episode, ex);
+                    ext = ex[0];
+                } else {
+                    Map<String, Object> body = new java.util.LinkedHashMap<>();
+                    body.put("item", item);
+                    body.put("lang", lang);
+                    if (e.episode >= 0) { body.put("season", e.season); body.put("episode", e.episode); }
+                    Map<String, Object> r = pc.post("/api/pocket/subget", body, 90000);
+                    text = Json.str(r.get("text"), ""); ext = Json.str(r.get("ext"), ".srt");
+                }
                 String stem = Player.niceName(f);
                 File dest = new File(app.videoDir(), stem + "." + lang + ext);
                 for (int k = 2; dest.exists(); k++) dest = new File(app.videoDir(), stem + "." + lang + k + ext);
@@ -1725,8 +1902,40 @@ public final class MainActivity extends Activity {
         Ui.pickRow(g, "AnkiDroid fields", "Set up", v -> Cards.setup(this, app.lang(), this::show));
         Ui.switchRow(g, "Copy videos into the app", "Off: a video stays where it is and the app remembers the place (no second copy)", app.prefs().getBoolean("copy_videos", false),
                 (b, on) -> app.prefs().edit().putBoolean("copy_videos", on).apply());
+        Ui.switchRow(g, "Hold new cards in the tray", "Off: a card is made at once. On: read, correct and drop cards first, then send them together.", Tray.on(),
+                (b, on) -> { app.prefs().edit().putBoolean("card_tray", on).apply(); show(); });
+        Ui.pickRow(g, "SubDL key (subtitle search on the phone)", app.prefs().getString("subdl_key", "").isEmpty() ? "not set" : "set", v -> {
+            android.widget.EditText kx = Ui.input(this, app.prefs().getString("subdl_key", ""), "free key from subdl.com");
+            Ui.dialog(this).setTitle("SubDL key").setView(kx).setPositiveButton("Save", (d, w) -> { app.prefs().edit().putString("subdl_key", kx.getText().toString().trim()).apply(); show(); }).setNegativeButton("Cancel", null).show();
+        });
+        Ui.pickRow(g, "Card tray", Tray.count() + " waiting", v -> Tray.show(this, this::show));
+        Ui.switchRow(g, "Sound: cut the silence at the ends", "The line's sound is decoded and trimmed (kept as .wav)", app.prefs().getBoolean("snd_trim", false), (b, on) -> app.prefs().edit().putBoolean("snd_trim", on).apply());
+        Ui.switchRow(g, "Sound: even out the volume", "Quiet lines are brought up, loud ones down", app.prefs().getBoolean("snd_norm", false), (b, on) -> app.prefs().edit().putBoolean("snd_norm", on).apply());
+        Ui.pickRow(g, "Sound: fade at both ends", app.prefs().getInt("snd_fade", 0) == 0 ? "none" : app.prefs().getInt("snd_fade", 0) + " ms", v -> {
+            int[] n = {0, 30, 60, 120};
+            String[] names = {"no fade", "30 ms (just takes off clicks)", "60 ms", "120 ms (soft)"};
+            Ui.choose(this, "Fade", names, -1, i -> { app.prefs().edit().putInt("snd_fade", n[i]).apply(); show(); });
+        });
+        Ui.pickRow(g, "Sound: extra before / after the line", app.prefs().getInt("padb_ms", app.prefs().getInt("pad_ms", 250)) + " / " + app.prefs().getInt("pada_ms", app.prefs().getInt("pad_ms", 250)) + " ms", v -> padDialog());
         Ui.add(l, g, 0);
         l.addView(Ui.hint(this, "Sound and picture of a video line are cut on the phone (MP4 / MKV). AAC, Opus and Vorbis are cut as they are; MP3, FLAC and similar become a small .wav. With no decoder (AC-3, often) the card is left to the PC."));
+
+        // ---- backup
+        l.addView(Ui.section(this, "Backup"));
+        g = Ui.group(this);
+        Ui.pickRow(g, "Make a backup", "words, details, settings, books, tray", v -> {
+            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("application/zip");
+            i.putExtra(Intent.EXTRA_TITLE, "glossa-backup-" + Stopwatch.day(System.currentTimeMillis()) + ".zip");
+            startActivityForResult(i, REQ_BACKUP);
+        });
+        Ui.pickRow(g, "Restore a backup", "", v -> Ui.dialog(this).setTitle("Restore a backup?")
+                .setMessage("Settings and words from the backup replace the ones here (the PC link stays). Books that are already here are kept. Dictionaries, card pictures and videos are not part of a backup.")
+                .setPositiveButton("Choose the file", (d, w) -> pick(REQ_RESTORE, new String[]{"application/zip", "application/x-zip-compressed", "application/octet-stream"}, false))
+                .setNegativeButton("Cancel", null).show());
+        Ui.add(l, g, 0);
+        l.addView(Ui.hint(this, "Dictionaries are not in it (import them again, a minute or two each); videos stay where they are."));
 
         // ---- updates, problems
         l.addView(Ui.section(this, "This app"));
@@ -1746,6 +1955,16 @@ public final class MainActivity extends Activity {
                 last.isFile() ? Ui.small(this, "Show", v -> problemReport("Problem report", last)) : null, null);
         Ui.add(l, g, 0);
         return Ui.scroll(this, l);
+    }
+
+    private void padDialog() {
+        int[] n = {0, 100, 200, 250, 400, 600, 900};
+        String[] names = new String[n.length];
+        for (int i = 0; i < n.length; i++) names[i] = n[i] + " ms";
+        Ui.choose(this, "Extra sound BEFORE the line", names, -1, i -> {
+            app.prefs().edit().putInt("padb_ms", n[i]).apply();
+            Ui.choose(this, "Extra sound AFTER the line", names, -1, j -> { app.prefs().edit().putInt("pada_ms", n[j]).apply(); show(); });
+        });
     }
 
     static String idleName(int s) { return s <= 0 ? "never" : s < 60 ? s + " s" : (s / 60) + " min"; }
@@ -1938,6 +2157,8 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (res != RESULT_OK || data == null) return;
+        if (req == REQ_BACKUP && data.getData() != null) { makeBackup(data.getData()); return; }
+        if (req == REQ_RESTORE && data.getData() != null) { restoreBackup(data.getData()); return; }
         if ((req == REQ_VFOLDER || req == REQ_BFOLDER) && data.getData() != null) {
             Uri tree = data.getData();
             try { getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (RuntimeException ignored) { /* not persistable: works this once */ }
@@ -1952,6 +2173,48 @@ public final class MainActivity extends Activity {
         else if (req == REQ_VIDEO) addVideos(uris);
         else if (req == REQ_DICT) importDict(uris.get(0));
         else if (req == REQ_PHOTO) photoBook(uris);
+    }
+
+    private Map<String, File> backupFolders() {
+        Map<String, File> m = new java.util.LinkedHashMap<>();
+        m.put("words", app.dir("words"));
+        m.put("books", app.dir("books"));
+        return m;
+    }
+
+    private void makeBackup(Uri to) {
+        app.bg(() -> {
+            try (java.io.OutputStream o = getContentResolver().openOutputStream(to)) {
+                int n = com.batchmine.pocket.core.Backup.write(o, app.prefs().getAll(), backupFolders());
+                app.post(() -> Ui.alert(this, "Backup saved", n + " files and all settings are in the backup."));
+            } catch (IOException | RuntimeException ex) { app.post(() -> Ui.alert(this, "The backup was not saved", ex.toString())); }
+        });
+    }
+
+    private void restoreBackup(Uri from) {
+        app.bg(() -> {
+            try (java.io.InputStream in = getContentResolver().openInputStream(from)) {
+                com.batchmine.pocket.core.Backup.Result r = com.batchmine.pocket.core.Backup.read(in, backupFolders(), com.batchmine.pocket.core.Backup.names("books"));
+                android.content.SharedPreferences.Editor e = app.prefs().edit();
+                String link = app.prefs().getString("pc_link", "");
+                for (Map.Entry<String, com.batchmine.pocket.core.Backup.Pref> x : r.prefs.entrySet()) {
+                    String k = x.getKey();
+                    Object v = x.getValue().value;
+                    if (k.equals("pc_link") && !link.isEmpty()) continue;
+                    switch (x.getValue().type) {
+                        case "b": e.putBoolean(k, Boolean.TRUE.equals(v)); break;
+                        case "i": e.putInt(k, (int) Json.num(v, 0)); break;
+                        case "l": e.putLong(k, (long) Json.num(v, 0)); break;
+                        case "f": e.putFloat(k, (float) Json.num(v, 0)); break;
+                        case "ss": { java.util.Set<String> ss = new java.util.TreeSet<>(); for (Object o : Json.arr(v)) ss.add(String.valueOf(o)); e.putStringSet(k, ss); break; }
+                        default: e.putString(k, Json.str(v, ""));
+                    }
+                }
+                e.apply();
+                app.forgetStores();
+                app.post(() -> { Ui.alert(this, "Restored", r.prefs.size() + " settings and " + r.files + " files came back. Close the app and open it again to see everything."); show(); });
+            } catch (IOException | RuntimeException ex) { app.post(() -> Ui.alert(this, "Could not restore", ex.toString())); }
+        });
     }
 
     /** Pictures of book pages: sent to the PC (tesseract reads the text), the new book is then copied here. */
