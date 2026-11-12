@@ -225,6 +225,10 @@ public final class MainActivity extends Activity {
         tab = "settings"; show();
     }
 
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) { return Pad.key(this, e, "app", null) || super.dispatchKeyEvent(e); }
+
+    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) { return Pad.motion(this, e, "app", null) || super.dispatchGenericMotionEvent(e); }
+
     @Override public void onBackPressed() {
         if ("settings".equals(tab)) { tab = before; show(); return; }
         if (openShow != null || openBookId != null) { openShow = null; openBookId = null; show(); return; }
@@ -1999,6 +2003,12 @@ public final class MainActivity extends Activity {
                 .setNegativeButton("Cancel", null).show());
         Ui.add(l, g, 0);
         l.addView(Ui.hint(this, "Dictionaries are not in it (import them again, a minute or two each); videos stay where they are."));
+
+        // ---- controller
+        l.addView(Ui.section(this, "Game controller"));
+        g = Ui.group(this);
+        Ui.pickRow(g, "Buttons", Pad.hasPad() ? "A controller is connected" : "Xbox, PlayStation, Switch Pro … (Bluetooth or USB)", v -> Pad.settings(this));
+        Ui.add(l, g, 0);
 
         // ---- storage
         l.addView(Ui.section(this, "Storage"));

@@ -306,6 +306,31 @@ public final class WordSheet {
             Cards.make(a, r, () -> { if (onChange != null) onChange.changed(); });
         });
         if (Ui.gone(a)) { if (closed != null) closed.run(); return; }
+        // game controller: D-pad up / down frame a definition, A ticks it (no definition framed: A makes the card), Menu makes the card, X known, Y save, B close
+        final Pad.Target padAct = act -> {
+            switch (act) {
+                case "defUp": case "defDown": if (webF != null) webF.evaluateJavascript("padDef(" + (act.equals("defDown") ? 1 : -1) + ")", null); return true;
+                case "select":
+                    if (webF == null) { card.performClick(); return true; }
+                    webF.evaluateJavascript("padSel()", val -> { if (val != null && val.contains("none")) card.performClick(); });
+                    return true;
+                case "scrollUp": case "scrollDown": if (webF != null) { if (act.equals("scrollUp")) webF.pageUp(false); else webF.pageDown(false); } return true;
+                case "card": card.performClick(); return true;
+                case "known": known.performClick(); return true;
+                case "save": save.performClick(); return true;
+                case "close": d.dismiss(); return true;
+                default: return false;
+            }
+        };
+        d.setOnKeyListener((dd, code, ev) -> {
+            if (!Pad.fromPad(ev)) return false;
+            if (ev.getAction() == android.view.KeyEvent.ACTION_DOWN && (ev.getRepeatCount() == 0 || code >= android.view.KeyEvent.KEYCODE_DPAD_UP && code <= android.view.KeyEvent.KEYCODE_DPAD_RIGHT)) {
+                String act = Pad.actionFor("word", Pad.button(code));
+                if (!act.isEmpty()) padAct.act(act);
+            }
+            return true;
+        });
+        if (d.getWindow() != null) d.getWindow().getDecorView().setOnGenericMotionListener((v, e) -> Pad.motion(a, e, "word", padAct));
         d.show();
         d.setOnDismissListener(x -> { if (webF != null) try { webF.destroy(); } catch (RuntimeException ignored) { } if (closed != null) closed.run(); });
         Runnable[] lookup = {null};
@@ -376,6 +401,7 @@ public final class WordSheet {
           // the single meanings, each with its own tick box (the PC's .gpick): tap a meaning to put it on the card
           .append("input.gpick{width:19px;height:19px;margin:0 7px 0 0;vertical-align:-4px;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}")
           .append("li.gli{border-radius:7px;padding:2px 4px;margin:1px -4px}li.gli.picked{background:").append(Ui.hex(Ui.mix(Ui.CARD, Ui.ACCENT, 0.2f))).append("}")
+          .append(".padrow{outline:2px solid ").append(Ui.hex(Ui.ACCENT)).append(";outline-offset:1px;border-radius:7px;background:").append(Ui.hex(Ui.mix(Ui.CARD, Ui.ACCENT, 0.18f))).append("}")
           .append(".gnote{font-size:12.5px;color:").append(Ui.hex(Ui.DIM)).append(";margin:6px 0 2px}")
           .append(css == null ? "" : css)
           .append("</style><script>")
@@ -388,6 +414,9 @@ public final class WordSheet {
           .append("x.addEventListener('change',function(){li.classList.toggle('picked',x.checked);if(x.checked){var pk=b.querySelector('input.pk');if(pk&&!pk.checked){pk.checked=true;pick()}}defs()});")
           .append("li.addEventListener('click',function(ev){if(ev.target.closest('a,summary,input,details>:not(summary)'))return;if(ev.target.closest('li')!==li)return;x.checked=!x.checked;x.dispatchEvent(new Event('change'))})})});")
           .append("if(n){var g=document.createElement('div');g.className='gnote';g.textContent='Tick the meanings you want: they go into the short definition field; the ticked dictionaries still give the full definition.';document.body.insertBefore(g,document.body.firstChild)}}")
+          // game controller: the framed definition (D-pad up / down), A ticks it
+          .append("function padDef(d){var xs=Array.prototype.slice.call(document.querySelectorAll('input.gpick'));if(!xs.length)return 0;var cur=document.querySelector('input.gpick.padcur'),i=cur?xs.indexOf(cur):-1;if(cur){cur.classList.remove('padcur');(cur.closest('li')||cur.parentNode).classList.remove('padrow')}i=i<0?(d>0?0:xs.length-1):Math.max(0,Math.min(xs.length-1,i+d));var x=xs[i];x.classList.add('padcur');var r=x.closest('li')||x.parentNode;r.classList.add('padrow');r.scrollIntoView({block:'nearest'});return xs.length}")
+          .append("function padSel(){var c=document.querySelector('input.gpick.padcur');if(!c)return 'none';c.click();return 'ok'}")
           .append("document.addEventListener('DOMContentLoaded',boxes)")
           .append("</script></head><body>");
         if (!r.found()) {

@@ -498,6 +498,34 @@ public final class Player extends Activity {
         if (i >= 0 && System.currentTimeMillis() - userScrolled > 5000) listView.smoothScrollToPositionFromTop(i, Math.max(0, listView.getHeight() / 4), 250);
     }
 
+    // ---------------------------------------------------------------- game controller (Pad.java)
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) { return Pad.key(this, e, "player", this::pad) || super.dispatchKeyEvent(e); }
+
+    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) { return Pad.motion(this, e, "player", this::pad) || super.dispatchGenericMotionEvent(e); }
+
+    private boolean pad(String a) {
+        switch (a) {
+            case "play": case "prev": case "next": case "repeat": case "mark": case "quick": case "menu": case "lines": case "speed": action(a); return true;
+            case "back5": case "fwd5": {
+                int to = video.getCurrentPosition() + (a.equals("back5") ? -5000 : 5000);
+                video.seekTo(Math.max(0, Math.min(Math.max(0, video.getDuration() - 500), to)));
+                shown = -2; primeLine = -1; primePhase = ""; loopUntil = -1;
+                return true;
+            }
+            case "volUp": case "volDown": {
+                android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+                if (am != null) am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, a.equals("volUp") ? android.media.AudioManager.ADJUST_RAISE : android.media.AudioManager.ADJUST_LOWER, android.media.AudioManager.FLAG_SHOW_UI);
+                return true;
+            }
+            case "pick":                                              // the words of the line on screen: D-pad moves, A (or Y) opens the word, B stops
+                video.pause();
+                if (!Pad.Picker.start(this, java.util.Collections.singletonList(subText), null)) Ui.toast(this, "No words on screen: step to a line first");
+                return true;
+            case "back": onBackPressed(); return true;
+            default: return false;
+        }
+    }
+
     private void toggle() {
         sheetUp = false;
         if ("read".equals(primePhase)) { primePhase = "listen"; shown = -2; video.start(); return; }       // read enough: play the line

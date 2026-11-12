@@ -259,6 +259,27 @@ public final class Reader extends Activity {
         if (on) Ui.toast(this, "Tap ⤡ (top right) or Back to show the bars again");
     }
 
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) { return Pad.key(this, e, "reader", this::pad) || super.dispatchKeyEvent(e); }
+
+    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) { return Pad.motion(this, e, "reader", this::pad) || super.dispatchGenericMotionEvent(e); }
+
+    /** The controller: pages, scrolling, picking a word of the page. */
+    private boolean pad(String a) {
+        switch (a) {
+            case "next": step(true); return true;
+            case "prev": step(false); return true;
+            case "scrollUp": case "scrollDown": list.smoothScrollBy((int) (list.getHeight() * 0.6f) * (a.equals("scrollUp") ? -1 : 1), 250); return true;
+            case "pick": {
+                List<TextView> tvs = new ArrayList<>();
+                for (int c = 0; c < list.getChildCount(); c++) if (list.getChildAt(c) instanceof TextView) tvs.add((TextView) list.getChildAt(c));
+                if (!Pad.Picker.start(this, tvs, null)) Ui.toast(this, "No words on this page yet");
+                return true;
+            }
+            case "back": onBackPressed(); return true;
+            default: return false;
+        }
+    }
+
     @Override public void onBackPressed() { if (full) fullscreen(false); else super.onBackPressed(); }
 
     // ---------------------------------------------------------------- pages
