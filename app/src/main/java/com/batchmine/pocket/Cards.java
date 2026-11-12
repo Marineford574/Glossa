@@ -267,7 +267,6 @@ public final class Cards {
         bar.setPadding(Ui.dp(a, 14), Ui.dp(a, 10), Ui.dp(a, 14), Ui.dp(a, 14));
         page.addView(bar);
         dlg[0] = Ui.sheet(a, "Cards in AnkiDroid · " + lang.toUpperCase(Locale.ROOT), page, true);
-        if (!Ui.gone(a)) dlg[0].show();
     }
 
     /** Field of each role (index, -1 = none): the saved ones for this note type, else guessed from the field names. */

@@ -11,7 +11,6 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.VideoView;
 
@@ -29,8 +28,7 @@ import java.util.Locale;
 public final class Player extends Activity {
     private App app;
     private VideoView video;
-    private TextView subText, trText, timeText;
-    private SeekBar seek;
+    private TextView subText, trText;
     private File file;
     private List<Subs.Cue> main = new ArrayList<>(), second = new ArrayList<>();
     private Colourer col;
@@ -44,8 +42,12 @@ public final class Player extends Activity {
     private double delay;                                // seconds the subtitles are late (+) or early (-), saved for each video
     private boolean autoPause;
     private int pausedAt = -2;
-    private android.widget.Button speedBtn, pauseBtn, markBtn;
-    private android.widget.ImageView playIcon;
+    private TextView speedLbl, statusText;
+    private android.widget.ImageView playIcon, markBtn, fsIcon;
+    private Timeline tl;
+    private LinearLayout topBar;
+    private boolean hideSub, hideTr, uiOn = true;
+    private long lastTouch = System.currentTimeMillis();
     // ---- the portrait layout: video on top, the lines of the subtitles scrolling below (Settings / the ⬒ button)
     private boolean stacked;
     private FrameLayout root, videoBox;
@@ -152,7 +154,7 @@ public final class Player extends Activity {
         adapter = new LineAdapter();
         listView.setAdapter(adapter);
         root.addView(listView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        video.setOnClickListener(v -> toggle());
+        video.setOnClickListener(v -> { if (!stacked && !uiOn) setUi(true); else toggle(); });
         LinearLayout subs = Ui.col(this);
         subsBox = subs;
         subs.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -173,59 +175,80 @@ public final class Player extends Activity {
         subs.addView(trText);
         FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
         root.addView(subs, sp);
+        // ---- the top bar: back, the title (series name, "Season 1 · Episode 3" under it), what is switched on, ★ for the line (the PC's title bar)
+        topBar = Ui.row(this);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0xB0000000, 0x00000000}));
+        topBar.setPadding(Ui.dp(this, 4), Ui.dp(this, 6), Ui.dp(this, 4), Ui.dp(this, 22));
+        android.widget.ImageView backIc = barIcon(R.drawable.ic_pl_back, "Back");
+        backIc.setOnClickListener(v -> finish());
+        topBar.addView(backIc, new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44)));
+        LinearLayout tcol = Ui.col(this);
+        com.batchmine.pocket.core.Shows.Ep ep = com.batchmine.pocket.core.Shows.of(videoName(file));
+        TextView ttl = Ui.text(this, !ep.show.isEmpty() ? ep.show : com.batchmine.pocket.core.Shows.pretty(videoName(file)), 16, 0xFFFFFFFF);
+        ttl.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+        ttl.setSingleLine(true); ttl.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        ttl.setShadowLayer(3, 0, 1, 0xFF000000);
+        tcol.addView(ttl);
+        if (ep.episode >= 0) { TextView es = Ui.text(this, ep.longLabel(), 12, 0xFFDDDDDD); es.setShadowLayer(3, 0, 1, 0xFF000000); tcol.addView(es); }
+        topBar.addView(tcol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        statusText = Ui.pill(this, "", 0xFFFFFFFF, 0x66000000);
+        statusText.setVisibility(View.GONE);
+        topBar.addView(statusText);
+        markBtn = barIcon(R.drawable.ic_pl_star_o, "Mark the line for a card");
+        markBtn.setOnClickListener(v -> action("mark"));
+        topBar.addView(markBtn, new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44)));
+        root.addView(topBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
+        // ---- the controls: one row of the PC's icons above the timeline strip (uosc)
         ctl = Ui.col(this);
-        ctl.setBackgroundColor(0xCC000000);
-        ctl.setPadding(Ui.dp(this, 8), Ui.dp(this, 4), Ui.dp(this, 8), Ui.dp(this, 6));
-        LinearLayout sr = Ui.row(this);
-        timeText = Ui.text(this, "0:00", 13, Ui.TEXT);
-        sr.addView(timeText);
-        seek = new SeekBar(this);
-        seek.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
-        seek.setThumbTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT));
-        seek.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Ui.mix(Ui.BG, Ui.TEXT, 0.3f)));
-        sr.addView(Ui.weight(seek, 1));
-        ctl.addView(sr);
-        // the PC player's own icons (mine_gui_player.js): previous line, repeat, play / pause, next line, subtitles, size, turn
         LinearLayout br = Ui.row(this);
         br.setGravity(Gravity.CENTER_VERTICAL);
-        int[] ics = {R.drawable.ic_pl_prev, R.drawable.ic_pl_repeat, R.drawable.ic_pl_play, R.drawable.ic_pl_next, R.drawable.ic_pl_cc, 0, R.drawable.ic_pl_fs};
-        String[] acts = {"prev", "repeat", "play", "next", "subs", "size", "rotate"};
-        String[] descr = {"Previous line", "Repeat this line", "Play / pause", "Next line", "Subtitle files", "Text size", "Turn the picture"};
+        br.setPadding(Ui.dp(this, 4), 0, Ui.dp(this, 4), Ui.dp(this, 2));
+        int[] ics = {R.drawable.ic_pl_menu, R.drawable.ic_pl_cc, R.drawable.ic_pl_prev, R.drawable.ic_pl_play, R.drawable.ic_pl_next, R.drawable.ic_pl_repeat, 0, R.drawable.ic_pl_fs};
+        String[] acts = {"menu", "subs", "prev", "play", "next", "repeat", "speed", "rotate"};
+        String[] descr = {"Menu", "Subtitles", "Previous line", "Play / pause", "Next line", "Say this line again", "Speed", "Turn the picture"};
         for (int k = 0; k < acts.length; k++) {
             final String act = acts[k];
             View bb;
             if (ics[k] == 0) {
-                TextView aa = Ui.text(this, "Aa", 17, Ui.TEXT);
-                aa.setGravity(Gravity.CENTER);
-                aa.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-                bb = aa;
+                speedLbl = Ui.text(this, "1×", 14, 0xFFFFFFFF);
+                speedLbl.setGravity(Gravity.CENTER);
+                speedLbl.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+                speedLbl.setShadowLayer(2, 0, 0, 0xFF000000);
+                bb = speedLbl;
             } else {
-                android.widget.ImageView iv = Ui.icon(this, ics[k], 24, k == 2 ? Ui.ON_ACC : Ui.TEXT);
+                android.widget.ImageView iv = Ui.icon(this, ics[k], 24, k == 3 ? Ui.ON_ACC : 0xFFFFFFFF);
                 iv.setPadding(Ui.dp(this, 9), Ui.dp(this, 9), Ui.dp(this, 9), Ui.dp(this, 9));
-                if (k == 2) { playIcon = iv; iv.setBackground(Ui.press(Ui.ACCENT, 0, Ui.dp(this, 99))); }
+                if (k == 3) { playIcon = iv; iv.setBackground(Ui.press(Ui.ACCENT, 0, Ui.dp(this, 99))); }
+                else if (k == 7) fsIcon = iv;
                 bb = iv;
             }
-            if (k != 2) bb.setBackground(Ui.press(0x00000000, 0, Ui.dp(this, 99)));
+            if (k != 3) bb.setBackground(Ui.press(0x00000000, 0x00000000, Ui.dp(this, 99)));
             bb.setContentDescription(descr[k]);
             bb.setOnClickListener(v -> action(act));
-            br.addView(bb, new LinearLayout.LayoutParams(0, Ui.dp(this, k == 2 ? 50 : 44), 1f));
+            if (k == 1) {                                        // the subtitle button with the number of subtitle files on it (the PC's badge)
+                FrameLayout fl = new FrameLayout(this);
+                fl.addView(bb);
+                int n = subsOf(file).size();
+                if (n > 0) {
+                    TextView bd = Ui.text(this, String.valueOf(n), 9, 0xFF000000);
+                    bd.setGravity(Gravity.CENTER);
+                    bd.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+                    bd.setBackground(Ui.round(0xFFFFFFFF, Ui.dp(this, 99)));
+                    fl.addView(bd, new FrameLayout.LayoutParams(Ui.dp(this, 15), Ui.dp(this, 15), Gravity.END | Gravity.BOTTOM));
+                    ((FrameLayout.LayoutParams) bd.getLayoutParams()).setMargins(0, 0, Ui.dp(this, 6), Ui.dp(this, 5));
+                }
+                br.addView(fl, new LinearLayout.LayoutParams(0, Ui.dp(this, 44), 1f));
+            } else br.addView(bb, new LinearLayout.LayoutParams(0, Ui.dp(this, k == 3 ? 50 : 44), 1f));
         }
         ctl.addView(br);
-        LinearLayout br2 = Ui.row(this);
-        speedBtn = Ui.small(this, "1×", v -> action("speed"));
-        pauseBtn = Ui.small(this, "Stop after line: off", v -> action("autopause"));
-        markBtn = Ui.small(this, "☆", v -> action("mark"));
-        for (android.widget.Button bb : new android.widget.Button[]{speedBtn, markBtn, Ui.small(this, "Sync ±", v -> action("delay")), pauseBtn, Ui.small(this, "Lines", v -> action("lines")), Ui.small(this, "⬒", v -> action("layout"))}) {
-            bb.setTextSize(12);
-            bb.setPadding(Ui.dp(this, 4), 0, Ui.dp(this, 4), 0);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, bb == pauseBtn ? 2.2f : 1f);
-            lp.rightMargin = Ui.dp(this, 4);
-            br2.addView(bb, lp);
-        }
-        ctl.addView(br2);
+        tl = new Timeline(this);
+        tl.onSeek(ms -> { dragging = false; video.seekTo(ms); shown = -2; primeLine = -1; primePhase = ""; loopUntil = -1; }, () -> dragging = true);
+        ctl.addView(tl, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 40)));
         root.addView(ctl, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
         // the subtitles sit just above the controls, whatever the height of those is (taller on a phone held upright)
         ctl.addOnLayoutChangeListener((vw, l, t, r, b, ol, ot, orr, ob) -> {
+            if (!uiOn && !stacked) return;
             int want = (b - t) + Ui.dp(this, 6);
             if (subs.getPaddingBottom() != want) subs.setPadding(subs.getPaddingLeft(), 0, subs.getPaddingRight(), want);
             if (stacked) {                                   // the list starts right under the controls
@@ -236,23 +259,16 @@ public final class Player extends Activity {
 
         setContentView(root);
         arrange();
-        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar s, int p, boolean user) { if (user) timeText.setText(Ui.time(p / 1000.0)); }
-            @Override public void onStartTrackingTouch(SeekBar s) { dragging = true; }
-            @Override public void onStopTrackingTouch(SeekBar s) { dragging = false; video.seekTo(s.getProgress()); shown = -2; primeLine = -1; primePhase = ""; loopUntil = -1; }
-        });
         delay = app.prefs().getFloat("delay_" + file.getName(), 0f);
         speed = app.prefs().getFloat("speed", 1f);
         autoPause = app.prefs().getBoolean("autopause", false);
         prime = app.prefs().getBoolean("prime", false);
-        pauseBtn.setText(autoPause ? "Stop after line: on" : "Stop after line: off");
-        speedBtn.setText(speedLabel(speed));
+        speedLbl.setText(speedLabel(speed));
         loadSubs();
         video.setVideoURI(videoUri(file));
         video.setOnPreparedListener(mp -> {
             mpl = mp;
             applySpeed();
-            seek.setMax(video.getDuration());
             int at = (int) (app.prefs().getFloat("vpos_" + file.getName(), 0) * 1000);
             double go = getIntent().getDoubleExtra("at", -1);                // from Home → Review: this line
             if (go >= 0) { video.seekTo((int) (Math.max(0, go - 1.5) * 1000)); getIntent().removeExtra("at"); }
@@ -315,9 +331,11 @@ public final class Player extends Activity {
             root.setBackgroundColor(Ui.BG);
             vb.height = w * 9 / 16; vb.gravity = Gravity.TOP;
             cl.gravity = Gravity.TOP; cl.topMargin = vb.height;
-            ctl.setBackgroundColor(Ui.CARD);
+            ctl.setBackgroundColor(0xFF000000);
+            ctl.setPadding(0, 0, 0, 0);
             FrameLayout.LayoutParams ll = (FrameLayout.LayoutParams) listView.getLayoutParams();
             ll.topMargin = vb.height + Ui.dp(this, 96);
+            uiOn = true; topBar.setVisibility(View.VISIBLE); ctl.setVisibility(View.VISIBLE);
             listView.setLayoutParams(ll);
             listView.setVisibility(View.VISIBLE);
             subsBox.setVisibility(View.GONE);
@@ -325,10 +343,12 @@ public final class Player extends Activity {
             root.setBackgroundColor(0xFF000000);
             vb.height = ViewGroup.LayoutParams.MATCH_PARENT; vb.gravity = Gravity.NO_GRAVITY;
             cl.gravity = Gravity.BOTTOM; cl.topMargin = 0;
-            ctl.setBackgroundColor(0xCC000000);
+            ctl.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP, new int[]{0xAA000000, 0x00000000}));
+            ctl.setPadding(0, Ui.dp(this, 18), 0, 0);
             listView.setVisibility(View.GONE);
             subsBox.setVisibility(View.VISIBLE);
         }
+        if (fsIcon != null) fsIcon.setImageResource(port ? R.drawable.ic_pl_fs : R.drawable.ic_pl_fs_exit);
         videoBox.setLayoutParams(vb);
         ctl.setLayoutParams(cl);
         shown = -2;                                          // draw the line where it belongs now
@@ -383,7 +403,8 @@ public final class Player extends Activity {
                     });
                 } else tx.setText(sp);
                 tr.setText(t);
-                tr.setVisibility(t.isEmpty() ? View.GONE : View.VISIBLE);
+                tr.setVisibility(t.isEmpty() || hideTr ? View.GONE : View.VISIBLE);
+                tx.setVisibility(hideSub && !cur ? View.GONE : View.VISIBLE);
             }
             View.OnClickListener go = x -> jump(pos);
             row.setOnClickListener(go); time.setOnClickListener(go); tr.setOnClickListener(go); tx.setOnClickListener(go);
@@ -439,29 +460,16 @@ public final class Player extends Activity {
             case "play": toggle(); break;
             case "prev": { double tt = t - delay; int i = Subs.around(main, tt); int j = Subs.at(main, tt) >= 0 ? i - 1 : i; jump(j); break; }
             case "next": { double tt = t - delay; int i = Subs.at(main, tt); int j = i >= 0 ? i + 1 : nextAfter(tt); jump(j); break; }
-            case "speed": {
-                float[] steps = {0.6f, 0.75f, 0.9f, 1f, 1.25f, 1.5f};
-                int k = 0;
-                for (int q = 0; q < steps.length; q++) if (Math.abs(steps[q] - speed) < 0.01f) k = q;
-                speed = steps[(k + 1) % steps.length];
-                app.prefs().edit().putFloat("speed", speed).apply();
-                speedBtn.setText(speedLabel(speed));
-                applySpeed();
-                break;
-            }
-            case "autopause":
-                autoPause = !autoPause;
-                app.prefs().edit().putBoolean("autopause", autoPause).apply();
-                pauseBtn.setText(autoPause ? "Stop after line: on" : "Stop after line: off");
-                pausedAt = -2;
-                Ui.toast(this, autoPause ? "The video stops at the end of every line: press play for the next" : "Plays on");
-                break;
+            case "speed": speedMenu(); break;
+            case "menu": mainMenu(); break;
+            case "quick": quick(); break;
+            case "autopause": setAutoPause(!autoPause, true); break;
             case "delay": delayDialog(); break;
             case "mark": {                                         // ★ the line on screen: it comes back in Home → Review
                 int i = Subs.around(main, t - delay);
                 if (i < 0) { Ui.toast(this, "No line here"); break; }
                 Marks.add(file.getName(), main.get(i).start, main.get(i).text, true);
-                markBtn.setText(Marks.isMarked(file.getName(), main.get(i).start) ? "★" : "☆");
+                markIcon(Marks.isMarked(file.getName(), main.get(i).start));
                 Ui.toast(this, Marks.isMarked(file.getName(), main.get(i).start) ? "Marked: it waits in Home → Review" : "Mark taken off");
                 break;
             }
@@ -500,6 +508,164 @@ public final class Player extends Activity {
                 break;
             }
         }
+    }
+
+
+    // ================================================================ the PC player's look: menus, quick settings, bars
+    private android.widget.ImageView barIcon(int res, String what) {
+        android.widget.ImageView iv = Ui.icon(this, res, 24, 0xFFFFFFFF);
+        iv.setPadding(Ui.dp(this, 10), Ui.dp(this, 10), Ui.dp(this, 10), Ui.dp(this, 10));
+        iv.setBackground(Ui.press(0x00000000, 0x00000000, Ui.dp(this, 99)));
+        iv.setContentDescription(what);
+        return iv;
+    }
+
+    private void markIcon(boolean on) {
+        markBtn.setImageResource(on ? R.drawable.ic_pl_star : R.drawable.ic_pl_star_o);
+        markBtn.setColorFilter(on ? 0xFFF5C211 : 0xFFFFFFFF);
+    }
+
+    /** Controls and title in or out (landscape, while the video plays). */
+    private void setUi(boolean on) {
+        if (uiOn == on || stacked) return;
+        uiOn = on;
+        topBar.setVisibility(on ? View.VISIBLE : View.INVISIBLE);
+        ctl.setVisibility(on ? View.VISIBLE : View.INVISIBLE);
+        subsBox.setPadding(subsBox.getPaddingLeft(), 0, subsBox.getPaddingRight(), on ? Math.max(ctl.getHeight(), Ui.dp(this, 96)) + Ui.dp(this, 6) : Ui.dp(this, 28));
+        if (on) lastTouch = System.currentTimeMillis();
+    }
+
+    /** What is switched on, shown at the top like the PC's pill: "🎧 primed · stops at lines · repeat 3". */
+    private void statusUpdate() {
+        String t = (prime ? "primed" : "") + (autoPause ? (prime ? " · " : "") + "stops after lines" : "") + (loopUntil > 0 ? (prime || autoPause ? " · " : "") + "repeating" + (loopLeft > 0 ? " " + loopLeft : "") : "");
+        if (!t.contentEquals(statusText.getText())) { statusText.setText(t); statusText.setVisibility(t.isEmpty() ? View.GONE : View.VISIBLE); }
+    }
+
+    private void setAutoPause(boolean on, boolean say) {
+        autoPause = on;
+        app.prefs().edit().putBoolean("autopause", on).apply();
+        pausedAt = -2;
+        if (say) Ui.toast(this, on ? "The video stops at the end of every line: press play for the next" : "Plays on");
+    }
+
+    private void setPrime(boolean on) {
+        prime = on;
+        app.prefs().edit().putBoolean("prime", on).apply();
+        primeLine = -1; primePhase = ""; shown = -2;
+    }
+
+    private void speedMenu() {
+        float[] st = {0.5f, 0.6f, 0.7f, 0.75f, 0.8f, 0.85f, 0.9f, 0.95f, 1f, 1.1f, 1.25f, 1.5f, 1.75f, 2f};
+        String[] items = new String[st.length];
+        int cur = 8;
+        for (int i = 0; i < st.length; i++) { items[i] = String.valueOf(st[i]).replace('.', ',').replaceAll(",0$", "") + "×"; if (Math.abs(st[i] - speed) < 0.01f) cur = i; }
+        Ui.choose(this, "Speed", items, cur, i -> setSpeed(st[i]));
+    }
+
+    private void setSpeed(float v) {
+        speed = v;
+        app.prefs().edit().putFloat("speed", speed).apply();
+        speedLbl.setText(speedLabel(speed));
+        applySpeed();
+    }
+
+    /** A row in the menus: a tick (when ON), the name, a small hint at the right. */
+    private LinearLayout menuRow(String name, String hint, boolean on, Runnable then, android.app.Dialog[] dlg) {
+        LinearLayout r = Ui.row(this);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(Ui.dp(this, 14), Ui.dp(this, 12), Ui.dp(this, 14), Ui.dp(this, 12));
+        r.setBackground(Ui.press(0x00000000, 0x00000000, Ui.dp(this, Ui.RS)));
+        TextView ck = Ui.text(this, on ? "✓" : "", 15, Ui.ACCENT);
+        ck.setMinWidth(Ui.dp(this, 24));
+        r.addView(ck);
+        TextView t = Ui.text(this, name, 16, Ui.TEXT);
+        if (on) t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        r.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (hint != null && !hint.isEmpty()) r.addView(Ui.text(this, hint, 13, Ui.DIM));
+        r.setOnClickListener(v -> { Ui.dismiss(dlg[0]); then.run(); });
+        return r;
+    }
+
+    private TextView menuHead(String s) {
+        TextView t = Ui.text(this, s.toUpperCase(Locale.ROOT), 11, Ui.DIM);
+        t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        t.setLetterSpacing(0.08f);
+        t.setPadding(Ui.dp(this, 16), Ui.dp(this, 14), 0, Ui.dp(this, 4));
+        return t;
+    }
+
+    /** The menu of the PC player (≡): quick settings, subtitles, this line, lists, layout, speed. */
+    private void mainMenu() {
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 6), 0, Ui.dp(this, 6), Ui.dp(this, 12));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        boolean port = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+        l.addView(menuRow("Quick settings…", "", false, this::quick, d));
+        l.addView(menuRow("Subtitles…", subsOf(file).size() + " file" + (subsOf(file).size() == 1 ? "" : "s"), false, this::subsDialog, d));
+        l.addView(menuRow(hideSub ? "Show the subtitles" : "Hide the subtitles", "", false, () -> { hideSub = !hideSub; shown = -2; adapter.notifyDataSetChanged(); }, d));
+        l.addView(menuRow(hideTr ? "Show the translation" : "Hide the translation", "", false, () -> { hideTr = !hideTr; shown = -2; adapter.notifyDataSetChanged(); }, d));
+        l.addView(menuRow("Speed…", speedLabel(speed), false, this::speedMenu, d));
+        l.addView(menuHead("This line"));
+        l.addView(menuRow("Previous line", "", false, () -> action("prev"), d));
+        l.addView(menuRow("Say this line again", "", false, () -> action("repeat"), d));
+        l.addView(menuRow("Next line", "", false, () -> action("next"), d));
+        l.addView(menuRow("Mark the line for a card", "★", false, () -> action("mark"), d));
+        l.addView(menuHead("Lists"));
+        l.addView(menuRow("All lines", main.size() + "", false, this::linesDialog, d));
+        l.addView(menuRow("Words of this video you don't know", "", false, this::unknownWords, d));
+        l.addView(menuHead("Picture and text"));
+        if (port) l.addView(menuRow("Video on top, the lines below", "", app.prefs().getBoolean("player_stack", true), () -> action("layout"), d));
+        l.addView(menuRow("Subtitle timing…", delay == 0 ? "" : String.format(Locale.ROOT, "%+.1f s", delay), false, this::delayDialog, d));
+        l.addView(menuRow("Text bigger / smaller", "", false, () -> action("size"), d));
+        l.addView(menuRow("Turn the picture", "", false, () -> action("rotate"), d));
+        l.addView(menuRow("Close the video", "", false, this::finish, d));
+        d[0] = Ui.sheet(this, "Menu", Ui.scroll(this, l), true);
+    }
+
+    /** Quick settings (the PC's ⚙): the switches and steps you reach for while watching. */
+    private void quick() {
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 16));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        l.addView(Ui.section(this, "Subtitles"));
+        LinearLayout g = Ui.group(this);
+        Ui.switchRow(g, "Subtitles", null, !hideSub, (b, on) -> { hideSub = !on; shown = -2; adapter.notifyDataSetChanged(); });
+        Ui.switchRow(g, "Translation (2nd track)", null, !hideTr, (b, on) -> { hideTr = !on; shown = -2; adapter.notifyDataSetChanged(); });
+        Ui.switchRow(g, "Word colours", "Unknown words coloured, tap a word for its card.", col.colours, (b, on) -> {
+            col.colours = on; app.prefs().edit().putBoolean("colours", on).apply(); col.forget(); spanCache.clear(); shown = -2; adapter.notifyDataSetChanged(); });
+        LinearLayout sz = Ui.row(this);
+        sz.addView(Ui.small(this, "A−", v -> sizeStep(-1)));
+        sz.addView(Ui.small(this, "A+", v -> sizeStep(1)));
+        Ui.srow(g, "Size", null, sz, null);
+        l.addView(g);
+        l.addView(Ui.section(this, "Playback"));
+        LinearLayout g2 = Ui.group(this);
+        Ui.pickRow(g2, "Speed", speedLabel(speed), v -> { Ui.dismiss(d[0]); speedMenu(); });
+        Ui.switchRow(g2, "Stop after every line", "Press play for the next line.", autoPause, (b, on) -> setAutoPause(on, false));
+        Ui.switchRow(g2, "Primed listening", "The translation first, then the sound alone, then the text.", prime, (b, on) -> setPrime(on));
+        int times = app.prefs().getInt("loop_times", 1);
+        String[] tn = {"1 time", "2 times", "3 times", "5 times", "until I go on"};
+        int[] tv = {1, 2, 3, 5, 0};
+        int ci = 0;
+        for (int i = 0; i < tv.length; i++) if (tv[i] == times) ci = i;
+        final int cur = ci;
+        Ui.pickRow(g2, "Say a line again", tn[cur], v -> { Ui.dismiss(d[0]); Ui.choose(this, "Say a line again", tn, cur, i -> app.prefs().edit().putInt("loop_times", tv[i]).apply()); });
+        l.addView(g2);
+        if (getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT) {
+            l.addView(Ui.section(this, "Layout"));
+            LinearLayout g3 = Ui.group(this);
+            Ui.switchRow(g3, "Video on top, the lines below", "Off: the picture fills the screen.", app.prefs().getBoolean("player_stack", true), (b, on) -> { app.prefs().edit().putBoolean("player_stack", on).apply(); arrange(); });
+            l.addView(g3);
+        }
+        d[0] = Ui.sheet(this, "Quick settings", Ui.scroll(this, l), false);
+    }
+
+    private void sizeStep(int dir) {
+        if (stacked) { listSp = Math.max(13, Math.min(28, listSp + dir * 2)); adapter.notifyDataSetChanged(); return; }
+        float s = subText.getTextSize() / getResources().getDisplayMetrics().scaledDensity;
+        s = Math.max(14, Math.min(34, s + dir * 3));
+        subText.setTextSize(s);
+        trText.setTextSize(Math.max(12, s - 6));
     }
 
     static String speedLabel(float s) { return (s == (int) s ? String.valueOf((int) s) : String.valueOf(s)) + "×"; }
@@ -635,7 +801,12 @@ public final class Player extends Activity {
         try {
             int pos = video.getCurrentPosition();
             double t = pos / 1000.0;
-            if (!dragging) { seek.setProgress(pos); timeText.setText(Ui.time(t)); }
+            tl.set(pos, video.getDuration());
+            statusUpdate();
+            if (!stacked) {                                          // the controls go when the video plays and nobody touches the screen (the PC hides them too)
+                if (!video.isPlaying() || "read".equals(primePhase)) { if (!uiOn) setUi(true); }
+                else if (uiOn && System.currentTimeMillis() - lastTouch > 3500) setUi(false);
+            }
             if (playIcon != null) playIcon.setImageResource(video.isPlaying() ? R.drawable.ic_pl_pause : R.drawable.ic_pl_play);
             if (loopUntil > 0 && t >= loopUntil) {
                 if (loopLeft == 0 || --loopLeft > 0) video.seekTo((int) (Math.max(0, loopFrom) * 1000));
@@ -654,13 +825,14 @@ public final class Player extends Activity {
 
     private void showLine(int i) {
         if (stacked) {
-            if (i >= 0) markBtn.setText(Marks.isMarked(file.getName(), main.get(i).start) ? "★" : "☆");
+            if (i >= 0) markIcon(Marks.isMarked(file.getName(), main.get(i).start));
             followLine(i);
             return;
         }
         if (i < 0) { subText.setVisibility(View.GONE); trText.setVisibility(View.GONE); return; }
         Subs.Cue c = main.get(i);
-        markBtn.setText(Marks.isMarked(file.getName(), c.start) ? "★" : "☆");
+        if (hideSub) { subText.setVisibility(View.GONE); }
+        markIcon(Marks.isMarked(file.getName(), c.start));
         if (prime && i == primeLine && ("read".equals(primePhase) || "listen".equals(primePhase))) {
             subText.setVisibility(View.GONE);                              // no text while it is primed: the translation to read, then the sound alone
             String tr0 = trFor(c);
@@ -671,12 +843,12 @@ public final class Player extends Activity {
         final String text = c.text;
         app.bg(() -> {
             CharSequence s = col.spans(text, (word, start, end, tx) -> tapped(word, start, tx, c));
-            app.post(() -> { if (shown == i) { subText.setText(s); subText.setVisibility(View.VISIBLE); } });
+            app.post(() -> { if (shown == i && !hideSub) { subText.setText(s); subText.setVisibility(View.VISIBLE); } });
         });
         StringBuilder tr = new StringBuilder();
         for (Subs.Cue x : second) if (x.start < c.end && x.end > c.start) { if (tr.length() > 0) tr.append('\n'); tr.append(x.text); }
         trText.setText(tr);
-        trText.setVisibility(tr.length() > 0 ? View.VISIBLE : View.GONE);
+        trText.setVisibility(tr.length() > 0 && !hideTr ? View.VISIBLE : View.GONE);
     }
 
     private void tapped(String word, int at, String text, Subs.Cue c) {
@@ -703,7 +875,7 @@ public final class Player extends Activity {
         WordSheet.show(this, lang, word, r, () -> { col.forget(); spanCache.clear(); shown = -2; });
     }
 
-    @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) { Stopwatch.active(); return super.dispatchTouchEvent(e); }
+    @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) { Stopwatch.active(); lastTouch = System.currentTimeMillis(); return super.dispatchTouchEvent(e); }
 
     @Override protected void onResume() {
         super.onResume();

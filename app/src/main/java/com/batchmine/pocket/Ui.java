@@ -510,6 +510,7 @@ public final class Ui {
             w.setDimAmount(0.5f);
         }
         d.setCanceledOnTouchOutside(true);
+        if (!gone(c)) try { d.show(); } catch (RuntimeException ignored) { }      // shown at once (callers used to forget it)
         return d;
     }
 
@@ -535,7 +536,6 @@ public final class Ui {
         android.widget.ScrollView sv = new android.widget.ScrollView(c);
         sv.addView(l);
         d[0] = sheet(c, title, sv, items.length > 9);
-        if (!gone(c)) try { d[0].show(); } catch (RuntimeException ignored) { }
     }
 
     /** Is this screen closed (or closing)? */
