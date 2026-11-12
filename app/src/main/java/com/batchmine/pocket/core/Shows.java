@@ -19,8 +19,14 @@ public final class Shows {
         /** For sorting: season, then episode. */
         public long order() { return season * 100000L + episode; }
         public String label() { return episode < 0 ? "" : (season > 0 ? "S" + season + " · " : "") + "Ep " + episode; }
+        /** "Season 1 · Episode 3" (for the line under a title). */
+        public String longLabel() { return episode < 0 ? "" : (season > 0 ? "Season " + season + " · " : "") + "Episode " + episode; }
     }
 
+    // "Staffel 1 Folge 3", "Season 1 Episode 3", "Stagione 1 Episodio 3", "Sezona 1 Epizoda 3"
+    private static final Pattern LONG = Pattern.compile("(?i)(?:^|[\\s._\\-\\[(])(?:staffel|season|stagione|sezona|saison|temporada)[\\s._-]*(\\d{1,2})[\\s._-]*(?:folge|episode|episodio|epizoda|épisode|ep|e)[\\s._-]*(\\d{1,3})(?!\\d)");
+    // "S1_01", "S1 - 01", "S01.03" (a season mark, then the episode number on its own)
+    private static final Pattern S_N = Pattern.compile("(?i)(?:^|[\\s._\\-\\[(])s(\\d{1,2})[\\s._-]+(\\d{1,3})(?!\\d)");
     private static final Pattern SXE = Pattern.compile("(?i)(?:^|[\\s._\\-\\[(])s(\\d{1,2})[\\s._-]*e(\\d{1,3})(?!\\d)");
     private static final Pattern NXN = Pattern.compile("(?i)(?:^|[\\s._\\-\\[(])(\\d{1,2})x(\\d{2,3})(?!\\d)");
     private static final Pattern WORD = Pattern.compile("(?i)(?:^|[\\s._\\-\\[(])(?:ep|eps|episode|episodio|ep\\.|folge|epizoda|épisode|episodio n\\.?)[\\s._]*(\\d{1,3})(?!\\d)");
@@ -30,7 +36,11 @@ public final class Shows {
         String n = fileName.replaceAll("\\.[A-Za-z0-9]{2,5}$", "");          // extension
         n = n.replaceAll("\\.vlink$", "");
         n = n.replaceAll("^\\s*\\[[^\\]]*\\]\\s*", "");                          // [Group] at the start
-        Matcher m = SXE.matcher(n);
+        Matcher m = LONG.matcher(n);
+        if (m.find()) return new Ep(clean(n.substring(0, m.start())), Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
+        m = SXE.matcher(n);
+        if (m.find()) return new Ep(clean(n.substring(0, m.start())), Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
+        m = S_N.matcher(n);
         if (m.find()) return new Ep(clean(n.substring(0, m.start())), Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
         m = NXN.matcher(n);
         if (m.find()) return new Ep(clean(n.substring(0, m.start())), Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
@@ -43,6 +53,14 @@ public final class Shows {
             if (!head.matches(".*\\b(19|20)\\d\\d$") || e < 100) return new Ep(clean(head), 0, e);
         }
         return new Ep("", 0, -1);
+    }
+
+    /** A file name made readable: no extension, no [group] tags, "_" and "." as spaces ("Mushi-Shi__S1_01" -> "Mushi-Shi S1 01"). */
+    public static String pretty(String fileName) {
+        String n = fileName.replaceAll("\\.vlink$", "").replaceAll("\\.[A-Za-z0-9]{2,5}$", "");
+        n = n.replaceAll("^\\s*\\[[^\\]]*\\]\\s*", "").replaceAll("\\[[^\\]]*\\]|\\((?:1080|720|480|2160)p?[^)]*\\)", " ");
+        n = n.replaceAll("(?i)\\b(1080p|720p|480p|2160p|x264|x265|h264|h265|hevc|web-?dl|webrip|bluray|brrip|aac|ac3|10bit)\\b", " ");
+        return n.replaceAll("[._]+", " ").replaceAll("\\s+", " ").replaceAll("\\s*-\\s*$", "").trim();
     }
 
     static String clean(String s) {

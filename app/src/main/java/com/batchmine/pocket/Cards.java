@@ -3,6 +3,7 @@ package com.batchmine.pocket;
 import android.app.Activity;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.LinearLayout;
 import android.widget.Spinner;
@@ -52,15 +53,15 @@ public final class Cards {
 
     /** What a card can carry, and the field names that usually hold it. */
     public static final String[][] ROLES = {
-            {"word", "Word", "word|target|expression|vocab|front|lemma|parola|wort"},
-            {"sentence", "Sentence", "sentence|context|example|frase|satz|line"},
-            {"translation", "Sentence translation", "translation|english|meaning of sentence|traduzione|übersetzung"},
+            {"word", "Word", "word|target|expression|vocab|front|lemma|parola|wort|vokabel|riječ"},
+            {"sentence", "Sentence", "sentence|context|example|frase|satz|line|beispielsatz|example sentence|rečenica"},
+            {"translation", "Sentence translation", "translation|english|meaning of sentence|traduzione|übersetzung|satzübersetzung|sentence translation|prijevod"},
             {"definition", "Definition", "definition|meaning|glossary|gloss|back|significato|bedeutung"},
             {"short", "Short definition (the meanings you tick)", "short definition|definizione|definition 1|short|brief|kurz"},
             {"ipa", "Pronunciation (IPA)", "ipa|pronunciation|reading|pronuncia"},
-            {"audio", "Sentence audio", "audio|sound|sentence audio|clip"},
-            {"picture", "Picture", "picture|image|screenshot|immagine|bild"},
-            {"wordaudio", "Word spoken (phone voice)", "word audio|pronunciation audio|audio word|wordaudio"},
+            {"audio", "Sentence audio", "audio|sound|sentence audio|satz audio|satzaudio|clip"},
+            {"picture", "Picture", "picture|image|screenshot|immagine|bild|slika"},
+            {"wordaudio", "Word spoken (phone voice)", "word audio|pronunciation audio|audio word|wordaudio|vokabel_audio|vokabel audio|wort audio|wortaudio"},
             {"frequency", "Frequency", "frequency|freq|rank|häufigkeit|frequenza"},
             {"source", "Source", "source|from|fonte|quelle"}};
 
@@ -196,72 +197,110 @@ public final class Cards {
         });
     }
 
+    /** The AnkiDroid set-up as a panel in the app's colours: note type, deck, and which field gets what (one row each, tap to change). */
     private static void setupDialog(Activity a, String lang, List<AnkiDroid.Model> models, List<AnkiDroid.Deck> decks, Runnable then) {
+        if (models.isEmpty() || decks.isEmpty()) { Ui.alert(a, "AnkiDroid", "AnkiDroid has no note types or decks yet. Make one there first."); return; }
         SharedPreferences p = App.get().prefs();
-        LinearLayout box = Ui.col(a);
-        int pad = Ui.dp(a, 16);
-        box.setPadding(pad, pad / 2, pad, 0);
-        box.addView(Ui.hint(a, "Note type"));
-        Spinner ms = spinner(a, models);
-        box.addView(ms);
-        box.addView(Ui.hint(a, "Deck"));
-        Spinner ds = spinner(a, decks);
-        box.addView(ds);
         long mid = p.getLong("anki_model_" + lang, -1), did = p.getLong("anki_deck_" + lang, -1);
-        for (int i = 0; i < models.size(); i++) if (models.get(i).id == mid) ms.setSelection(i);
-        for (int i = 0; i < decks.size(); i++) if (decks.get(i).id == did) ds.setSelection(i);
-        LinearLayout fields = Ui.col(a);
-        box.addView(Ui.hint(a, "Which field gets what"));
-        box.addView(fields);
-        List<Spinner> roleSpinners = new ArrayList<>();
-        Runnable fill = () -> {
-            fields.removeAllViews();
-            roleSpinners.clear();
-            if (models.isEmpty()) return;
-            AnkiDroid.Model m = models.get(ms.getSelectedItemPosition());
-            List<String> opts = new ArrayList<>();
-            opts.add("—");
-            for (String f : m.fields) opts.add(f);
-            Map<String, Integer> saved = m.id == p.getLong("anki_model_" + lang, -1) ? fieldMap(lang) : new LinkedHashMap<>();
-            for (String[] role : ROLES) {
-                LinearLayout row = Ui.row(a);
-                TextView t = Ui.text(a, role[1], 14, Ui.TEXT);
-                row.addView(Ui.weight(t, 1));
-                Spinner s = spinner(a, opts);
-                row.addView(Ui.weight(s, 1.3f));
-                int pick = saved.containsKey(role[0]) ? saved.get(role[0]) + 1 : guess(m.fields, role[2]) + 1;
-                s.setSelection(Math.max(0, Math.min(pick, opts.size() - 1)));
-                roleSpinners.add(s);
-                fields.addView(row);
-            }
-        };
-        ms.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(android.widget.AdapterView<?> parent, android.view.View view, int pos, long id) { fill.run(); }
-            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
-        });
-        fill.run();
-        Ui.dialog(a).setTitle("Cards in AnkiDroid (" + lang.toUpperCase(Locale.ROOT) + ")").setView(Ui.scroll(a, box))
-                .setPositiveButton("Save", (d, w) -> {
-                    if (models.isEmpty() || decks.isEmpty()) return;
-                    AnkiDroid.Model m = models.get(ms.getSelectedItemPosition());
-                    Map<String, Object> map = new LinkedHashMap<>();
-                    for (int i = 0; i < ROLES.length && i < roleSpinners.size(); i++) {
-                        int sel = roleSpinners.get(i).getSelectedItemPosition() - 1;
-                        if (sel >= 0) map.put(ROLES[i][0], sel);
+        int[] mi = {0}, di = {0};
+        for (int i = 0; i < models.size(); i++) if (models.get(i).id == mid) mi[0] = i;
+        if (mid < 0) for (int i = 0; i < models.size(); i++) if (models.get(i).name.toLowerCase(Locale.ROOT).contains(lang)) { mi[0] = i; break; }
+        for (int i = 0; i < decks.size(); i++) if (decks.get(i).id == did) di[0] = i;
+        int[][] sel = {choices(models.get(mi[0]), lang, p, false)};
+
+        LinearLayout body = Ui.col(a);
+        body.setPadding(Ui.dp(a, 14), 0, Ui.dp(a, 14), Ui.dp(a, 12));
+        android.widget.ScrollView sv = new android.widget.ScrollView(a);
+        sv.addView(body);
+        LinearLayout page = Ui.col(a);
+        page.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        android.app.Dialog[] dlg = new android.app.Dialog[1];
+        Runnable[] draw = new Runnable[1];
+        draw[0] = () -> {
+            body.removeAllViews();
+            AnkiDroid.Model m = models.get(mi[0]);
+            body.addView(Ui.hint(a, "Cards made on the phone for " + lang.toUpperCase(Locale.ROOT) + " go into this note type and deck. Tap a row to change it."));
+            body.addView(Ui.section(a, "Where the cards go"));
+            LinearLayout g = Ui.group(a);
+            Ui.pickRow(g, "Note type", m.name, v -> {
+                String[] names = new String[models.size()];
+                for (int i = 0; i < names.length; i++) names[i] = models.get(i).name;
+                Ui.choose(a, "Note type", names, mi[0], i -> { mi[0] = i; sel[0] = choices(models.get(i), lang, p, false); draw[0].run(); });
+            });
+            Ui.pickRow(g, "Deck", decks.get(di[0]).name, v -> {
+                String[] names = new String[decks.size()];
+                for (int i = 0; i < names.length; i++) names[i] = decks.get(i).name;
+                Ui.choose(a, "Deck", names, di[0], i -> { di[0] = i; draw[0].run(); });
+            });
+            Ui.add(body, g, 0);
+            body.addView(Ui.section(a, "What goes into which field"));
+            g = Ui.group(a);
+            for (int k = 0; k < ROLES.length; k++) {
+                final int role = k;
+                int f = sel[0][k];
+                Ui.pickRow(g, ROLES[k][1], f < 0 ? "nothing" : m.fields[f], v -> {
+                    String[] opts = new String[m.fields.length + 1];
+                    opts[0] = "— nothing";
+                    for (int i = 0; i < m.fields.length; i++) {
+                        String taken = "";
+                        for (int r = 0; r < ROLES.length; r++) if (r != role && sel[0][r] == i) taken = "  (now: " + ROLES[r][1].replaceAll(" \\(.*", "") + ")";
+                        opts[i + 1] = m.fields[i] + taken;
                     }
-                    p.edit().putLong("anki_model_" + lang, m.id).putLong("anki_deck_" + lang, decks.get(ds.getSelectedItemPosition()).id)
-                            .putInt("anki_nfields_" + lang, m.fields.length).putString("anki_fields_" + lang, Json.write(map)).apply();
-                    if (then != null) then.run();
-                })
-                .setNegativeButton("Cancel", null).show();
+                    Ui.choose(a, ROLES[role][1], opts, sel[0][role] + 1, i -> { sel[0][role] = i - 1; draw[0].run(); });
+                });
+            }
+            Ui.add(body, g, 0);
+            Ui.add(body, Ui.flat(a, "Guess the fields again from their names", v -> { sel[0] = choices(models.get(mi[0]), lang, p, true); draw[0].run(); }), 10);
+        };
+        draw[0].run();
+        LinearLayout bar = Ui.buttons(a, Ui.button(a, "Cancel", v -> Ui.dismiss(dlg[0])), Ui.primary(a, "Save", v -> {
+            AnkiDroid.Model m = models.get(mi[0]);
+            Map<String, Object> map = new LinkedHashMap<>();
+            for (int i = 0; i < ROLES.length; i++) if (sel[0][i] >= 0) map.put(ROLES[i][0], sel[0][i]);
+            p.edit().putLong("anki_model_" + lang, m.id).putLong("anki_deck_" + lang, decks.get(di[0]).id)
+                    .putInt("anki_nfields_" + lang, m.fields.length).putString("anki_fields_" + lang, Json.write(map)).apply();
+            Ui.dismiss(dlg[0]);
+            if (then != null) then.run();
+        }));
+        bar.setPadding(Ui.dp(a, 14), Ui.dp(a, 10), Ui.dp(a, 14), Ui.dp(a, 14));
+        page.addView(bar);
+        dlg[0] = Ui.sheet(a, "Cards in AnkiDroid · " + lang.toUpperCase(Locale.ROOT), page, true);
+        if (!Ui.gone(a)) dlg[0].show();
     }
 
-    static int guess(String[] fields, String pattern) {
-        for (String alt : pattern.split("\\|"))
-            for (int i = 0; i < fields.length; i++) if (fields[i].toLowerCase(Locale.ROOT).equals(alt)) return i;
-        for (String alt : pattern.split("\\|"))
-            for (int i = 0; i < fields.length; i++) if (fields[i].toLowerCase(Locale.ROOT).contains(alt)) return i;
-        return -1;
+    /** Field of each role (index, -1 = none): the saved ones for this note type, else guessed from the field names. */
+    static int[] choices(AnkiDroid.Model m, String lang, SharedPreferences p, boolean fresh) {
+        int[] out = assign(m.fields);
+        if (!fresh && m.id == p.getLong("anki_model_" + lang, -1)) {
+            Map<String, Integer> saved = fieldMap(lang);
+            for (int i = 0; i < ROLES.length; i++) {
+                Integer f = saved.get(ROLES[i][0]);
+                out[i] = f != null && f < m.fields.length ? f : -1;
+            }
+        }
+        return out;
+    }
+
+    /** Guesses which field is which from the names, each field used once: the most specific matches are placed first
+     *  ("Worthäufigkeit" is the frequency, not the word, because "häufigkeit" says more than "wort"). */
+    static int[] assign(String[] fields) {
+        int[] out = new int[ROLES.length];
+        java.util.Arrays.fill(out, -1);
+        List<int[]> cands = new ArrayList<>();                   // {score, role, field}
+        for (int r = 0; r < ROLES.length; r++)
+            for (int f = 0; f < fields.length; f++) {
+                String n = fields[f].toLowerCase(Locale.ROOT).trim();
+                int best = 0;
+                for (String alt : ROLES[r][2].split("\\|")) {
+                    int sc = n.equals(alt) ? 100 + alt.length() : n.startsWith(alt) ? 40 + alt.length() : n.contains(alt) ? alt.length() : 0;
+                    best = Math.max(best, sc);
+                }
+                if (best > 0) cands.add(new int[]{best, r, f});
+            }
+        cands.sort((x, y) -> y[0] - x[0]);
+        boolean[] used = new boolean[fields.length];
+        for (int[] c : cands) if (out[c[1]] < 0 && !used[c[2]]) { out[c[1]] = c[2]; used[c[2]] = true; }
+        return out;
     }
 
     static <T> Spinner spinner(Activity a, List<T> items) {

@@ -227,7 +227,7 @@ public final class MainActivity extends Activity {
         File[] ds = app.dicts.root.listFiles();
         for (Dict d : app.dicts.list()) if (!d.lang.isEmpty() && !langs.contains(d.lang)) langs.add(0, d.lang);
         String[] items = langs.toArray(new String[0]);
-        Ui.dialog(this).setTitle("Language").setItems(items, (d, i) -> { app.setLang(items[i]); show(); }).show();
+        Ui.choose(this, "Language", items, -1, i -> { app.setLang(items[i]); show(); });
     }
 
     private void sync() { sync(true); }
@@ -348,12 +348,12 @@ public final class MainActivity extends Activity {
 
         // continue: the videos and books touched last, newest first
         List<Object[]> recent = new ArrayList<>();          // {time, view}
-        File[] vfs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+        File[] vfs = myVideos();
         if (vfs != null) for (File f : vfs) {
             long t = sp.getLong("vpost_" + f.getName(), 0);
             float at = sp.getFloat("vpos_" + f.getName(), 0);
             if (t <= 0 || at < 5) continue;
-            LinearLayout it = Ui.item(this, "▶  " + Player.niceName(f), "at " + Ui.time(at) + " · " + Ui.ago(t), v -> openVideo(f));
+            LinearLayout it = Ui.item(this, "▶  " + vtitle(f), (vepisode(f).isEmpty() ? "" : vepisode(f) + " · ") + "at " + Ui.time(at) + " · " + Ui.ago(t), v -> openVideo(f));
             recent.add(new Object[]{t, it});
         }
         for (BookInfo bk : bookList(app.lang())) {
@@ -380,7 +380,7 @@ public final class MainActivity extends Activity {
         List<BookInfo> books = bookList(app.lang());
         shelf(l, "Books", books.size(), "books", () -> {
             List<View> out = new ArrayList<>();
-            for (BookInfo bk : books) out.add(cover(bk.title, Math.round(app.prefs().getFloat("rf_" + bk.id, 0) * 100) + "% · " + bk.chapters + " ch.", v -> openBook(bk), bookCover(bk.title, 92, 124)));
+            for (BookInfo bk : books) out.add(cover(bk.title, Math.round(app.prefs().getFloat("rf_" + bk.id, 0) * 100) + "% · " + bk.chapters + " ch.", v -> openBook(bk), bookCover(bk.id, bk.title, 92, 124)));
             return out;
         });
         File[] vs = vfs == null ? new File[0] : vfs.clone();
@@ -389,7 +389,7 @@ public final class MainActivity extends Activity {
             List<View> out = new ArrayList<>();
             for (File f : vs) {
                 float at = sp.getFloat("vpos_" + f.getName(), 0);
-                out.add(cover(Player.niceName(f), at > 5 ? "at " + Ui.time(at) : "not started", v -> openVideo(f), videoTile(f, 120, 68)));
+                out.add(cover(vtitle(f), (vepisode(f).isEmpty() ? "" : vepisode(f).replace("Season ", "S").replace(" · Episode ", " · Ep ") + " · ") + (at > 5 ? "at " + Ui.time(at) : "not started"), v -> openVideo(f), videoTile(f, 120, 68)));
             }
             return out;
         });
@@ -441,7 +441,7 @@ public final class MainActivity extends Activity {
 
     /** Lines to come back to (marked ★ or stumbled on) per video, like the PC's Home → Review. */
     private void reviewBox(LinearLayout l) {
-        File[] fs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+        File[] fs = myVideos();
         List<File> with = new ArrayList<>();
         if (fs != null) for (File f : fs) { int[] c = Marks.counts(f.getName()); if (c[0] + c[1] > 0) with.add(f); }
         if (with.isEmpty()) return;
@@ -462,7 +462,7 @@ public final class MainActivity extends Activity {
             if (i > 0) { View line = new View(this); line.setBackgroundColor(Ui.LINE); g.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)); }
             LinearLayout r = Ui.row(this);
             r.setPadding(0, Ui.dp(this, 10), 0, Ui.dp(this, 10));
-            TextView t = Ui.text(this, Player.niceName(f), 15, Ui.TEXT);
+            TextView t = Ui.text(this, vtitle(f) + (vepisode(f).isEmpty() ? "" : " · " + vepisode(f).replace("Season ", "S").replace(" · Episode ", " E")), 15, Ui.TEXT);
             t.setSingleLine(true); t.setEllipsize(android.text.TextUtils.TruncateAt.END);
             r.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             TextView ct = Ui.text(this, (c[0] > 0 ? c[0] + " ★" : "") + (c[0] > 0 && c[1] > 0 ? " · " : "") + (c[1] > 0 ? c[1] + " hard" : ""), 13, Ui.DIM);
@@ -522,7 +522,38 @@ public final class MainActivity extends Activity {
     }
 
     /** A book cover: a coloured block with a darker spine and the title on it (the PC shows the cover picture where the book has one). */
-    private View bookCover(String title, int wDp, int hDp) {
+    private final java.util.Set<String> coverTried = new java.util.HashSet<>();
+
+    private File coverFile(String id) { return new File(app.dir("books"), id + ".jpg"); }
+
+    /** A book's own cover picture (from the EPUB, or the PC's Reader); fetched in the background for PC books that have none yet. */
+    private View bookCover(String id, String title, int wDp, int hDp) {
+        File cf = coverFile(id);
+        if (cf.length() > 200) {
+            android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+            o.inSampleSize = 2;
+            android.graphics.Bitmap bm = android.graphics.BitmapFactory.decodeFile(cf.getPath(), o);
+            if (bm != null) {
+                android.widget.ImageView iv = new android.widget.ImageView(this);
+                iv.setImageBitmap(bm);
+                iv.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+                iv.setBackground(Ui.round(Ui.CARD2, Ui.dp(this, 6)));
+                iv.setClipToOutline(true);
+                iv.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, wDp), Ui.dp(this, hDp)));
+                return iv;
+            }
+        }
+        if (id.startsWith("pc") && app.pc() != null && coverTried.add(id)) {
+            PcLink pc = app.pc();
+            app.bg(() -> {
+                try { pc.download("/api/reader/cover.jpg?key=" + id.substring(2), cf, null); if (cf.length() > 200) app.post(() -> { if (isFinishing()) return; show(); }); else cf.delete(); }
+                catch (IOException | RuntimeException e) { cf.delete(); }
+            });
+        }
+        return typeCover(title, wDp, hDp);
+    }
+
+    private View typeCover(String title, int wDp, int hDp) {
         android.widget.FrameLayout f = new android.widget.FrameLayout(this);
         int h = Math.abs(title.hashCode());
         int base = Ui.mix(Ui.ACCENT, (h & 1) == 0 ? Ui.BG : Ui.TEXT, 0.15f + (h % 5) * 0.08f);
@@ -561,7 +592,7 @@ public final class MainActivity extends Activity {
     /** A video's picture tile (a frame of it) at a size. */
     private View videoTile(File f, int wDp, int hDp) {
         float at = app.prefs().getFloat("vpos_" + f.getName(), 0), dur = app.prefs().getFloat("vdur_" + f.getName(), 0);
-        View t = Thumbs.tile(this, f, Player.niceName(f), watched(f) ? 1f : dur > 30 ? at / dur : 0f);
+        View t = Thumbs.tile(this, f, vtitle(f), watched(f) ? 1f : dur > 30 ? at / dur : 0f);
         t.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, wDp), Ui.dp(this, hDp)));
         return t;
     }
@@ -622,17 +653,17 @@ public final class MainActivity extends Activity {
             float frac = app.prefs().getFloat("rf_" + bk.id, 0);
             if (frac > 0.005f) { View pr = Ui.progress(this, frac); ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8); it.addView(pr); }
             it.setOnLongClickListener(v -> { bookMenu(bk); return true; });
-            Ui.add(l, withPicture(it, bookCover(bk.title, 54, 76)), 8);
+            Ui.add(l, withPicture(it, bookCover(bk.id, bk.title, 54, 76)), 8);
         }
         return Ui.scroll(this, l);
     }
 
     private void bookMenu(BookInfo bk) {
-        Ui.dialog(this).setTitle(bk.title).setItems(new String[]{"Rename…", "Delete this book"}, (d, w) -> {
+        Ui.choose(this, bk.title, new String[]{"Rename…", "Delete this book"}, -1, w -> {
             if (w == 0) renameBook(bk);
             else Ui.dialog(this).setTitle("Delete “" + bk.title + "”?").setMessage("The book is removed from the phone (the PC keeps its copy).")
                     .setPositiveButton("Delete", (d2, i) -> { bk.file.delete(); openBookId = null; show(); }).setNegativeButton("Keep", null).show();
-        }).show();
+        });
     }
 
     private void renameBook(BookInfo bk) {
@@ -658,7 +689,7 @@ public final class MainActivity extends Activity {
         l.addView(backRow("Books", () -> { openBookId = null; show(); }));
         LinearLayout hero = Ui.card(this);
         LinearLayout top = Ui.row(this);
-        top.addView(bookCover(bk.title, 84, 118));
+        top.addView(bookCover(bk.id, bk.title, 84, 118));
         LinearLayout tx = Ui.col(this);
         tx.setPadding(Ui.dp(this, 14), 0, 0, 0);
         TextView tt = Ui.text(this, bk.title, 19, Ui.TEXT);
@@ -687,10 +718,10 @@ public final class MainActivity extends Activity {
                 Book b = Book.read(bk.file);
                 String[] names = new String[b.chapters.size()];
                 for (int i = 0; i < names.length; i++) names[i] = (i + 1) + ". " + b.chapters.get(i).title;
-                app.post(() -> Ui.dialog(this).setTitle("Contents").setItems(names, (d, i) -> {
+                app.post(() -> Ui.choose(this, "Contents", names, -1, i -> {
                     app.prefs().edit().putInt("rc_" + bk.id, i).putInt("rp_" + bk.id, 0).apply();
                     openBook(bk);
-                }).show());
+                }));
             } catch (IOException | RuntimeException e) { app.post(() -> Ui.toast(this, "Could not open the book")); }
         });
     }
@@ -744,7 +775,7 @@ public final class MainActivity extends Activity {
                     if (bs.isEmpty()) { Ui.alert(this, "Books on the PC", "The Reader on the PC has no " + lang.toUpperCase(Locale.ROOT) + " books."); return; }
                     String[] names = new String[bs.size()];
                     for (int i = 0; i < names.length; i++) names[i] = Json.str(Json.obj(bs.get(i)).get("title"), "?");
-                    Ui.dialog(this).setTitle("Copy a book from the PC").setItems(names, (d, i) -> {
+                    Ui.choose(this, "Copy a book from the PC", names, -1, i -> {
                         String key = Json.str(Json.obj(bs.get(i)).get("key"), "");
                         Ui.toast(this, "Copying…");
                         app.bg(() -> {
@@ -756,7 +787,7 @@ public final class MainActivity extends Activity {
                                 app.post(() -> { Ui.toast(this, "“" + bk.title + "” copied"); show(); });
                             } catch (IOException e) { app.post(() -> Ui.alert(this, "Could not copy", explain(e))); }
                         });
-                    }).show();
+                    });
                 });
             } catch (IOException e) { app.post(() -> Ui.alert(this, "Could not reach the PC", explain(e))); }
         });
@@ -771,7 +802,7 @@ public final class MainActivity extends Activity {
         acts.addView(Ui.weight(Ui.primary(this, "Add a video", v -> pick(REQ_VIDEO, new String[]{"video/*", "application/x-subrip", "text/vtt", "text/x-ssa", "application/octet-stream", "text/*"}, true)), 1));
         acts.addView(Ui.weight(Ui.button(this, "From the PC", v -> pcVideos()), 1));
         Ui.add(l, acts, 8);
-        File[] fs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+        File[] fs = myVideos();
         if (fs == null || fs.length == 0) {
             l.addView(Ui.hint(this, "No videos yet. “Add a video” takes a video from the phone together with its subtitle files (.srt / .vtt / .ass): choose them all in one go. “From the PC” copies an episode and its subtitles over Wi-Fi."));
         } else {
@@ -829,7 +860,57 @@ public final class MainActivity extends Activity {
         return eps.get(0);
     }
 
-    private String showName(List<File> eps) { return Shows.of(Player.videoName(eps.get(0))).show; }
+
+    // ---- which language a video is for, and how it is named
+    /** The language a video belongs to: the one chosen when it was added, else from its subtitle files (the learning language, not English), else "" (unknown). */
+    private String vlang(File f) {
+        String own = app.prefs().getString("vlang_" + f.getName(), "");
+        if (!own.isEmpty()) return own;
+        String en = "";
+        for (File sf : Player.subsOf(f)) {
+            String g = Player.guessLang(sf.getName());
+            if (g.equals("sub")) continue;
+            if (g.equals("en")) en = "en"; else return g;
+        }
+        return en;
+    }
+
+    /** The videos for the language on show; videos whose language is not known yet appear everywhere (long-press → Set language). */
+    private File[] myVideos() {
+        File[] all = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+        if (all == null) return new File[0];
+        List<File> out = new ArrayList<>();
+        String cur = app.lang();
+        for (File f : all) { String l = vlang(f); if (l.isEmpty() || l.equals(cur)) out.add(f); }
+        return out.toArray(new File[0]);
+    }
+
+    private void pickVideoLang(File f) {
+        String[] codes = {"it", "de", "hr", "en", "fr", "es", "pt", "nl"};
+        Ui.choose(this, "Which language is this video for?", codes, Arrays.asList(codes).indexOf(vlang(f)), i -> { setVideoLang(f, codes[i]); show(); });
+    }
+
+    private void setVideoLang(File f, String lang) { app.prefs().edit().putString("vlang_" + f.getName(), lang).apply(); }
+
+    /** What to call a video: the series name for an episode, a cleaned-up name for a film. */
+    private String vtitle(File f) {
+        Shows.Ep e = Shows.of(Player.videoName(f));
+        return !e.show.isEmpty() ? e.show : Shows.pretty(Player.videoName(f));
+    }
+
+    /** "Season 1 · Episode 3" for an episode, else "". */
+    private String vepisode(File f) { return Shows.of(Player.videoName(f)).longLabel(); }
+
+    /** Subtitle languages as tags: "DE · EN", or "no subtitles". */
+    private String subTags(File f) {
+        java.util.LinkedHashSet<String> t = new java.util.LinkedHashSet<>();
+        int n = 0;
+        for (File sf : Player.subsOf(f)) { n++; String g = Player.guessLang(sf.getName()); t.add(g.equals("sub") ? "SUB" : g.toUpperCase(Locale.ROOT)); }
+        if (n == 0) return "no subtitles";
+        return android.text.TextUtils.join(" · ", t);
+    }
+
+    private String showName(List<File> eps) { return vtitle(eps.get(0)); }
 
     private View showCard(String key, List<File> eps) {
         File nx0 = nextEpisode(eps);
@@ -849,7 +930,7 @@ public final class MainActivity extends Activity {
 
     /** The page of one show: its episodes in order, the one to continue with, which are watched (like the PC's series page). */
     private View showPage(String key) {
-        File[] fs = app.videoDir().listFiles((d, n) -> Player.isVideo(n));
+        File[] fs = myVideos();
         List<File> eps = fs == null ? null : showGroups(fs).get(key);
         if (eps == null) return null;
         LinearLayout l = Ui.col(this);
@@ -883,13 +964,20 @@ public final class MainActivity extends Activity {
         long fsize = linked ? linkSize(f) : f.length();
         boolean done = watched(f);
         Shows.Ep e = Shows.of(Player.videoName(f));
-        String head = inShow ? (done ? "✓  " : "") + (e.episode >= 0 ? e.label() : Player.niceName(f)) : Player.niceName(f);
-        String sub = (fsize < 0 ? "video not found (add it again)" : Ui.size(fsize) + (linked ? " (stays where it is)" : "")) + " · " + (subs == 0 ? "no subtitles" : subs + " subtitle file" + (subs > 1 ? "s" : ""))
-                + (done ? " · watched" : at > 5 ? " · at " + Ui.time(at) : "");
+        String head = inShow ? (done ? "✓  " : "") + (e.episode >= 0 ? e.longLabel() : vtitle(f)) : vtitle(f);
+        List<String> bits = new ArrayList<>();
+        if (!inShow && e.episode >= 0) bits.add(e.longLabel());
+        if (inShow && e.episode >= 0 && !e.show.isEmpty() && Shows.pretty(Player.videoName(f)).length() > e.show.length() + 8) { /* a title after the numbers is not known: nothing to add */ }
+        bits.add(subTags(f));
+        if (fsize < 0) bits.add("video not found (add it again)");
+        else if (linked) bits.add("stays where it is");
+        if (done) bits.add("watched"); else if (at > 5) bits.add("at " + Ui.time(at));
+        String sub = android.text.TextUtils.join(" · ", bits);
         LinearLayout it = Ui.item(this, head, sub, v -> openVideo(f));
         it.setOnLongClickListener(v -> {
-            String[] acts = {done ? "Mark as not watched" : "Mark as watched", linked ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles"};
-            Ui.dialog(this).setTitle(Player.niceName(f)).setItems(acts, (d, w) -> {
+            String[] acts = {done ? "Mark as not watched" : "Mark as watched", linked ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles", "Set language (now: " + (vlang(f).isEmpty() ? "not set" : vlang(f)) + ")"};
+            Ui.choose(this, vtitle(f), acts, -1, w -> {
+                if (w == 2) { pickVideoLang(f); return; }
                 if (w == 0) {
                     android.content.SharedPreferences.Editor ed = app.prefs().edit().putBoolean("vdone_" + f.getName(), !done).putLong("vpost_" + f.getName(), System.currentTimeMillis());
                     if (done) ed.putFloat("vpos_" + f.getName(), 0);
@@ -899,7 +987,7 @@ public final class MainActivity extends Activity {
                     f.delete();
                 }
                 show();
-            }).show();
+            });
             return true;
         });
         return withPicture(it, videoTile(f, 104, 58));
@@ -926,7 +1014,7 @@ public final class MainActivity extends Activity {
                         Map<String, Object> v = Json.obj(vs.get(i));
                         names[i] = Json.str(v.get("series"), "") + " / " + Json.str(v.get("name"), "?") + "  (" + Ui.size((long) Json.num(v.get("size"), 0)) + ")";
                     }
-                    Ui.dialog(this).setTitle("Copy from the PC").setItems(names, (d, i) -> copyVideo(pc, Json.obj(vs.get(i)))).show();
+                    Ui.choose(this, "Copy from the PC", names, -1, i -> copyVideo(pc, Json.obj(vs.get(i))));
                 });
             } catch (IOException e) { app.post(() -> Ui.alert(this, "Could not reach the PC", explain(e))); }
         });
@@ -956,6 +1044,7 @@ public final class MainActivity extends Activity {
                     @Override public void progress(long done, long total) { app.post(() -> bar.setProgress(total > 0 ? (int) (done * 1000 / total) : 0)); }
                     @Override public boolean cancelled() { return cancel[0]; }
                 });
+                app.prefs().edit().putString("vlang_" + name, app.lang()).apply();
                 app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); Ui.toast(this, name + " copied"); show(); });
             } catch (IOException e) {
                 app.post(() -> { Ui.dismiss(dlg); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); if (!cancel[0]) Ui.alert(this, "Could not copy", explain(e)); show(); });
@@ -979,7 +1068,7 @@ public final class MainActivity extends Activity {
             for (Map<String, Object> c : pend) {
                 String id = Json.str(c.get("id"), "");
                 Ui.add(l, Ui.item(this, Json.str(c.get("word"), ""), Json.str(c.get("sentence"), ""), v ->
-                        Ui.dialog(this).setTitle(Json.str(c.get("word"), "")).setItems(new String[]{"Remove this card"}, (d, i) -> { ws.removePending(id); show(); }).show()), 6);
+                        Ui.choose(this, Json.str(c.get("word"), ""), new String[]{"Remove this card"}, -1, i -> { ws.removePending(id); show(); })), 6);
             }
         }
         List<Map<String, Object>> saved = ws.saved();
@@ -1065,34 +1154,34 @@ public final class MainActivity extends Activity {
             String[] names = new String[Ui.THEMES.length + 1];
             names[0] = "Same as on the PC";
             for (int i = 0; i < Ui.THEMES.length; i++) names[i + 1] = Ui.THEMES[i][1];
-            Ui.dialog(this).setTitle("Theme").setItems(names, (dl, i) -> {
+            Ui.choose(this, "Theme", names, -1, i -> {
                 app.prefs().edit().putString("theme", i == 0 ? "pc" : Ui.THEMES[i - 1][0]).apply();
                 Ui.load(this);
                 recreate();
-            }).show();
+            });
         });
         String acc = app.prefs().getString("accent", "");
         Ui.pickRow(g, "Accent colour", acc.isEmpty() ? "The theme's own" : Ui.accentName(acc), v -> {
             String[] names = new String[Ui.ACCENTS.length];
             for (int i = 0; i < names.length; i++) names[i] = Ui.ACCENTS[i][0];
-            Ui.dialog(this).setTitle("Accent colour").setItems(names, (dl, i) -> {
+            Ui.choose(this, "Accent colour", names, -1, i -> {
                 app.prefs().edit().putString("accent", Ui.ACCENTS[i][1]).apply();
                 Ui.load(this);
                 recreate();
-            }).show();
+            });
         });
         String ic = app.prefs().getString("icon", "original");
         Ui.pickRow(g, "App icon", "pc".equals(ic) ? "Same as the PC" : Icons.name(ic), v -> {
             String[] names = new String[Icons.ALL.length + 1];
             names[0] = "Same as on the PC";
             for (int i = 0; i < Icons.ALL.length; i++) names[i + 1] = Icons.ALL[i][1];
-            Ui.dialog(this).setTitle("App icon").setItems(names, (dl, i) -> {
+            Ui.choose(this, "App icon", names, -1, i -> {
                 String id = i == 0 ? "pc" : Icons.ALL[i - 1][0];
                 app.prefs().edit().putString("icon", id).apply();
                 if (i == 0) Ui.toast(this, "The icon follows the PC from the next sync");
                 else { Icons.apply(this, id); Ui.toast(this, "The launcher shows the new icon in a moment. A shortcut on the home screen may need adding again."); }
                 show();
-            }).show();
+            });
         });
         Ui.switchRow(g, "Coloured words", "Unknown, looked-up and card words coloured in videos and books, as on the PC", app.prefs().getBoolean("colours", true),
                 (b, on) -> app.prefs().edit().putBoolean("colours", on).apply());
@@ -1112,7 +1201,7 @@ public final class MainActivity extends Activity {
         Ui.pickRow(g, "Repeat a line", app.prefs().getInt("loop_times", 1) == 0 ? "until you go on" : app.prefs().getInt("loop_times", 1) + "×", v -> {
             int[] n = {1, 2, 3, 5, 0};
             String[] names = {"once", "2 times", "3 times", "5 times", "until you go on"};
-            Ui.dialog(this).setTitle("↺ plays the line").setItems(names, (d, i) -> { app.prefs().edit().putInt("loop_times", n[i]).apply(); show(); }).show();
+            Ui.choose(this, "↺ plays the line", names, -1, i -> { app.prefs().edit().putInt("loop_times", n[i]).apply(); show(); });
         });
         Ui.add(l, g, 0);
         l.addView(Ui.hint(this, "The stopwatch counts while a video plays (or is paused for a moment) and while you read. Its time goes to the PC at each sync and shows in Home → This week there."));
@@ -1122,7 +1211,7 @@ public final class MainActivity extends Activity {
         g = Ui.group(this);
         for (Dict d : app.dicts.list()) {
             Ui.srow(g, d.title + " [" + d.lang + "]", d.summary(), null, v ->
-                    Ui.dialog(this).setTitle(d.title).setItems(new String[]{"Delete this dictionary"}, (dl, i) -> { app.dicts.remove(d); show(); }).show());
+                    Ui.choose(this, d.title, new String[]{"Delete this dictionary"}, -1, i -> { app.dicts.remove(d); show(); }));
         }
         LinearLayout imp = Ui.col(this);
         imp.setPadding(0, Ui.dp(this, 12), 0, Ui.dp(this, 12));
@@ -1172,7 +1261,7 @@ public final class MainActivity extends Activity {
         int[] n = {10, 20, 30, 60, 90, 180, 300, 0};
         String[] names = new String[n.length];
         for (int i = 0; i < n.length; i++) names[i] = n[i] == 0 ? "never (counts while open)" : "after " + idleName(n[i]) + " with nothing happening";
-        Ui.dialog(this).setTitle("The stopwatch stops").setItems(names, (d, i) -> { app.prefs().edit().putInt(key, n[i]).apply(); show(); }).show();
+        Ui.choose(this, "The stopwatch stops", names, -1, i -> { app.prefs().edit().putInt(key, n[i]).apply(); show(); });
     }
 
     // ================================================================ updates
@@ -1309,6 +1398,12 @@ public final class MainActivity extends Activity {
                 bk.id = "ph" + Long.toString(System.currentTimeMillis(), 36);
                 if (bk.lang.isEmpty() || !bk.lang.equals(lang)) bk.lang = lang;
                 bk.write(new File(app.dir("books"), bk.id + ".json"));
+                if (name.toLowerCase(Locale.ROOT).endsWith(".epub")) {
+                    try (InputStream again = getContentResolver().openInputStream(u)) {
+                        byte[] pic = com.batchmine.pocket.core.EpubCover.extract(again);
+                        if (pic != null) try (java.io.FileOutputStream fo = new java.io.FileOutputStream(coverFile(bk.id))) { fo.write(pic); }
+                    } catch (IOException | RuntimeException ignored) { /* no cover: the lettered one is used */ }
+                }
                 app.post(() -> { Ui.toast(this, "“" + bk.title + "” added"); show(); });
             } catch (IOException | RuntimeException e) { app.post(() -> Ui.alert(this, "Could not add the book", String.valueOf(e.getMessage()))); }
         });
@@ -1356,6 +1451,9 @@ public final class MainActivity extends Activity {
                     }
                 }
                 int count = n;
+                for (String nm : used) if (Player.isVideo(nm)) app.prefs().edit().putString("vlang_" + nm, app.lang()).apply();
+                for (int k = 0; k < uris.size(); k++) if (Player.isVideo(names.get(k)) && !app.prefs().getBoolean("copy_videos", false))
+                    app.prefs().edit().putString("vlang_" + names.get(k).replaceAll("\\.[^.]+$", "") + ".vlink", app.lang()).apply();
                 app.post(() -> { Ui.toast(this, count + " file(s) copied"); show(); });
             } catch (IOException e) { app.post(() -> Ui.alert(this, "Could not copy", String.valueOf(e.getMessage()))); }
         });

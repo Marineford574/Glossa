@@ -453,6 +453,65 @@ public final class Ui {
         };
     }
 
+    // ---------------------------------------------------------------- sheets in the app's own colours (not the phone's grey dialogs)
+    /** A panel that slides up from the bottom in the app's colours, with a title row (and ✕); FULL = the whole height. */
+    public static android.app.Dialog sheet(Context c, CharSequence title, View content, boolean full) {
+        android.app.Dialog d = new android.app.Dialog(c, android.R.style.Theme_DeviceDefault_NoActionBar);
+        LinearLayout box = col(c);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(BG);
+        float r = dp(c, 18);
+        bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+        box.setBackground(bg);
+        LinearLayout head = row(c);
+        head.setPadding(dp(c, 18), dp(c, 14), dp(c, 6), dp(c, 6));
+        TextView t = text(c, title, 18, TEXT);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        head.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView x = text(c, "✕", 18, DIM);
+        x.setPadding(dp(c, 14), dp(c, 6), dp(c, 14), dp(c, 6));
+        x.setOnClickListener(v -> dismiss(d));
+        head.addView(x);
+        box.addView(head);
+        box.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, full ? 0 : ViewGroup.LayoutParams.WRAP_CONTENT, full ? 1f : 0f));
+        d.setContentView(box);
+        android.view.Window w = d.getWindow();
+        if (w != null) {
+            w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, full ? (int) (c.getResources().getDisplayMetrics().heightPixels * 0.92f) : ViewGroup.LayoutParams.WRAP_CONTENT);
+            w.setGravity(Gravity.BOTTOM);
+            w.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            w.setDimAmount(0.5f);
+        }
+        d.setCanceledOnTouchOutside(true);
+        return d;
+    }
+
+    public interface Chosen { void pick(int i); }
+
+    /** A list to choose one from, in the app's colours: the current one ticked. */
+    public static void choose(Context c, CharSequence title, String[] items, int current, Chosen then) {
+        LinearLayout l = col(c);
+        l.setPadding(dp(c, 10), 0, dp(c, 10), dp(c, 14));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        for (int i = 0; i < items.length; i++) {
+            final int k = i;
+            LinearLayout r = row(c);
+            r.setPadding(dp(c, 12), dp(c, 13), dp(c, 12), dp(c, 13));
+            TextView t = text(c, items[i], 16, i == current ? ACCENT : TEXT);
+            if (i == current) t.setTypeface(Typeface.DEFAULT_BOLD);
+            r.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            if (i == current) r.addView(text(c, "✓", 16, ACCENT));
+            r.setBackground(press(0x00000000, 0, dp(c, RS)));
+            r.setOnClickListener(v -> { dismiss(d[0]); then.pick(k); });
+            l.addView(r);
+        }
+        android.widget.ScrollView sv = new android.widget.ScrollView(c);
+        sv.addView(l);
+        d[0] = sheet(c, title, sv, items.length > 9);
+        if (!gone(c)) try { d[0].show(); } catch (RuntimeException ignored) { }
+    }
+
     /** Is this screen closed (or closing)? */
     public static boolean gone(Context c) {
         return c instanceof android.app.Activity && (((android.app.Activity) c).isFinishing() || ((android.app.Activity) c).isDestroyed());

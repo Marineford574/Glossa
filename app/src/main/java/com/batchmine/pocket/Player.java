@@ -574,12 +574,12 @@ public final class Player extends Activity {
                 if (list.isEmpty()) { Ui.alert(this, "Unknown words", "No unknown words in these subtitles."); return; }
                 String[] items = new String[list.size()];
                 for (int i = 0; i < items.length; i++) items[i] = list.get(i).getKey() + "   ×" + list.get(i).getValue()[0];
-                Ui.dialog(this).setTitle(found.size() + " unknown words, most frequent first").setItems(items, (d, i) -> {
+                Ui.choose(this, found.size() + " unknown words, most frequent first", items, -1, i -> {
                     int line = list.get(i).getValue()[1];
                     String w = list.get(i).getKey();
                     video.pause();
                     tapped(w, 0, main.get(line).text, main.get(line));
-                }).show();
+                });
             });
         });
     }
@@ -615,7 +615,7 @@ public final class Player extends Activity {
         if (subs.isEmpty()) { Ui.alert(this, "Subtitles", "There is no subtitle file (.srt, .vtt, .ass) with this video. Add the subtitle files with the video (Videos → Add a video, choose both), or copy it from the PC with its subtitles."); return; }
         String[] names = new String[subs.size()];
         for (int i = 0; i < names.length; i++) names[i] = subs.get(i).getName();
-        Ui.dialog(this).setTitle("Subtitles to learn from").setItems(names, (d, i) -> {
+        Ui.choose(this, "Subtitles to learn from", names, -1, i -> {
             app.prefs().edit().putString("sub_" + file.getName(), names[i]).apply();
             String[] two = new String[names.length + 1];
             two[0] = "(no translation)";
@@ -625,7 +625,7 @@ public final class Player extends Activity {
                 loadSubs();
                 shown = -2;
             }).show();
-        }).show();
+        });
     }
 
     private boolean tickFailed;
@@ -690,7 +690,7 @@ public final class Player extends Activity {
         r.end = c.end + delay;
         r.video = videoUri(file).toString();
         r.videoName = videoName(file);
-        r.title = niceName(file);
+        r.title = com.batchmine.pocket.core.Shows.pretty(videoName(file));
         StringBuilder tr = new StringBuilder();
         for (Subs.Cue x : second) if (x.start < c.end && x.end > c.start) { if (tr.length() > 0) tr.append(' '); tr.append(x.text.replace('\n', ' ')); }
         r.translation = tr.toString();

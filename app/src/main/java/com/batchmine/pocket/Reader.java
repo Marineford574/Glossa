@@ -99,7 +99,7 @@ public final class Reader extends Activity {
     private void contents() {
         String[] names = new String[book.chapters.size()];
         for (int i = 0; i < names.length; i++) names[i] = (i == chapter ? "▶ " : "") + (i + 1) + ". " + book.chapters.get(i).title;
-        Ui.dialog(this).setTitle("Contents").setItems(names, (d, i) -> go(i)).show();
+        Ui.choose(this, "Contents", names, -1, i -> go(i));
     }
 
     private void save() {

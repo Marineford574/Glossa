@@ -60,11 +60,27 @@ public class CoreTest {
       {"Novine_08.mp4", "Novine", "0", "8"},
       {"La vita è bella (1997).mp4", "", "0", "-1"},
       {"Blade Runner 2049.mkv", "", "0", "-1"},
-      {"Suburra Episodio 2.vlink", "Suburra", "0", "2"}};
+      {"Suburra Episodio 2.vlink", "Suburra", "0", "2"},
+      {"Mushi-Shi__S1_01.mkv", "Mushi-Shi", "1", "1"},
+      {"Dark_Staffel_1_Folge_01.mp4", "Dark", "1", "1"},
+      {"Fairy_Tail__S1__01.mkv", "Fairy Tail", "1", "1"},
+      {"Gomorra Stagione 2 Episodio 10.mkv", "Gomorra", "2", "10"}};
     for (String[] e : eps) {
       Shows.Ep x = Shows.of(e[0]);
       check("show: " + e[0], x.show.equals(e[1]) && x.season == Integer.parseInt(e[2]) && x.episode == Integer.parseInt(e[3]), x.show + "|" + x.season + "|" + x.episode);
     }
+    try {
+      java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+      try (java.util.zip.ZipOutputStream zo = new java.util.zip.ZipOutputStream(bo)) {
+        String[][] ents = {{"META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OEBPS/content.opf\"/></rootfiles></container>"},
+          {"OEBPS/content.opf", "<package><metadata><meta name=\"cover\" content=\"cv\"/></metadata><manifest><item id=\"cv\" href=\"img/front%20.jpg\" media-type=\"image/jpeg\"/></manifest></package>"}};
+        for (String[] en : ents) { zo.putNextEntry(new java.util.zip.ZipEntry(en[0])); zo.write(en[1].getBytes("UTF-8")); zo.closeEntry(); }
+        zo.putNextEntry(new java.util.zip.ZipEntry("OEBPS/img/front .jpg")); zo.write(new byte[400]); zo.closeEntry();
+      }
+      byte[] pic = EpubCover.extract(new java.io.ByteArrayInputStream(bo.toByteArray()));
+      check("epub cover", pic != null && pic.length == 400, pic == null ? "null" : pic.length);
+    } catch (Exception ex) { check("epub cover", false, ex); }
+    check("pretty name", Shows.pretty("Some_Film.2019.1080p.x264.mkv").equals("Some Film 2019"), Shows.pretty("Some_Film.2019.1080p.x264.mkv"));
     check("show key ignores case and dots", Shows.key("Don Matteo").equals(Shows.key("don.matteo")), "");
     System.out.println(fails == 0 ? "all passed" : fails + " FAILED");
     System.exit(fails == 0 ? 0 : 1);
