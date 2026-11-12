@@ -150,8 +150,50 @@ public final class Player extends Activity {
         }
     }
 
+    // ---------------------------------------------------------------- headphones and earbuds: play / pause (one press), next / previous line
+    private android.media.session.MediaSession session;
+    private int lastState = -1;
+    private final android.content.BroadcastReceiver noisy = new android.content.BroadcastReceiver() {
+        @Override public void onReceive(android.content.Context c, Intent i) { if (video != null && video.isPlaying()) video.pause(); }     // headphones pulled out
+    };
+
+    private void mediaButtons() {
+        session = new android.media.session.MediaSession(this, "Glossa player");
+        session.setCallback(new android.media.session.MediaSession.Callback() {
+            @Override public void onPlay() { if (video != null && !video.isPlaying()) toggle(); }
+            @Override public void onPause() { if (video != null && video.isPlaying()) video.pause(); }
+            @Override public void onSkipToNext() { if (video != null) action("next"); }
+            @Override public void onSkipToPrevious() { if (video != null) action("prev"); }
+        });
+        session.setActive(true);
+        playState(false, 0);
+        try { registerReceiver(noisy, new android.content.IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY)); } catch (RuntimeException ignored) { }
+    }
+
+    /** Tells the phone (and so the headphones) whether the video plays: a press then pauses or plays it. */
+    private void playState(boolean playing, int posMs) {
+        int st = playing ? android.media.session.PlaybackState.STATE_PLAYING : android.media.session.PlaybackState.STATE_PAUSED;
+        if (session == null || st == lastState) return;
+        lastState = st;
+        session.setPlaybackState(new android.media.session.PlaybackState.Builder()
+                .setActions(android.media.session.PlaybackState.ACTION_PLAY | android.media.session.PlaybackState.ACTION_PAUSE | android.media.session.PlaybackState.ACTION_PLAY_PAUSE
+                        | android.media.session.PlaybackState.ACTION_SKIP_TO_NEXT | android.media.session.PlaybackState.ACTION_SKIP_TO_PREVIOUS)
+                .setState(st, posMs, playing ? speed : 0f).build());
+    }
+
+    /** The status bar and the navigation bar stay hidden while you watch; a swipe from the edge shows them for a moment. */
+    @SuppressWarnings("deprecation")
+    private void immersive() {
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+    }
+
+    @Override public void onWindowFocusChanged(boolean focus) { super.onWindowFocusChanged(focus); if (focus) immersive(); }
+
     private void build() {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        immersive();
+        mediaButtons();
         file = new File(getIntent().getStringExtra("path"));
         lang = app.lang();
         col = new Colourer(lang);
@@ -450,6 +492,7 @@ public final class Player extends Activity {
     }
 
     private void toggle() {
+        sheetUp = false;
         if ("read".equals(primePhase)) { primePhase = "listen"; shown = -2; video.start(); return; }       // read enough: play the line
         if (video.isPlaying()) video.pause(); else video.start();
     }
@@ -901,8 +944,10 @@ public final class Player extends Activity {
     private void tick() {
         if (isFinishing() || video == null) return;
         try {
+            if (sheetUp && video.isPlaying()) video.pause();          // whatever started it (a repeat, primed listening, the end of a seek)
             int pos = video.getCurrentPosition();
             double t = pos / 1000.0;
+            playState(video.isPlaying(), pos);
             tl.set(pos, video.getDuration());
             statusUpdate();
             if (!stacked) {                                          // the controls go when the video plays and nobody touches the screen (the PC hides them too)
@@ -961,8 +1006,14 @@ public final class Player extends Activity {
         trText.setVisibility(tr.length() > 0 && !hideTr ? View.VISIBLE : View.GONE);
     }
 
+    private boolean sheetUp;                                 // the word sheet is open: the video stays paused (nothing restarts it)
+
     private void tapped(String word, int at, String text, Subs.Cue c) {
         video.pause();
+        sheetUp = true;
+        primePhase = "";                                     // primed listening must not play on after its reading time
+        h.removeCallbacksAndMessages(null);
+        h.postDelayed(this::tick, 120);
         Marks.add(file.getName(), c.start, c.text, false);                  // a line you looked a word up in
         Cards.Request r = new Cards.Request();
         r.lang = lang;
@@ -982,7 +1033,7 @@ public final class Player extends Activity {
             if (ci - k >= 0) r.before.add(new Cards.Ctx(main.get(ci - k).text.replace('\n', ' '), main.get(ci - k).start + delay, main.get(ci - k).end + delay));
             if (ci + k < main.size()) r.after.add(new Cards.Ctx(main.get(ci + k).text.replace('\n', ' '), main.get(ci + k).start + delay, main.get(ci + k).end + delay));
         }
-        WordSheet.show(this, lang, word, r, () -> { col.forget(); spanCache.clear(); shown = -2; });
+        WordSheet.show(this, lang, word, r, () -> { col.forget(); spanCache.clear(); shown = -2; }, () -> { sheetUp = false; immersive(); });
     }
 
     @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) { Stopwatch.active(); lastTouch = System.currentTimeMillis(); return super.dispatchTouchEvent(e); }
@@ -1007,5 +1058,10 @@ public final class Player extends Activity {
         }
     }
 
-    @Override protected void onDestroy() { super.onDestroy(); h.removeCallbacksAndMessages(null); }
+    @Override protected void onDestroy() {
+        super.onDestroy();
+        h.removeCallbacksAndMessages(null);
+        if (session != null) { session.setActive(false); session.release(); session = null; }
+        try { unregisterReceiver(noisy); } catch (RuntimeException ignored) { }
+    }
 }

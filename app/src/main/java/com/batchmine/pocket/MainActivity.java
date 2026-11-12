@@ -209,6 +209,10 @@ public final class MainActivity extends Activity {
         WordStore ws = app.store();
         int n = ws.unsentCount();
         status.setText(ws.knownCount() + " known words" + (ws.pulledAt() == 0 ? " · not synced with the PC yet" : "") + (n > 0 ? " · " + n + " change(s) to send" : ""));
+        String page = tab + "|" + openShow + "|" + openBookId + "|" + openList;
+        android.widget.ScrollView was = firstScroll(body);
+        int keepY = was != null && page.equals(shownPage) ? was.getScrollY() : -1;   // the same page drawn again (a sync, a change): stay where you were
+        shownPage = page;
         body.removeAllViews();
         queueSrc = null;
         View v;
@@ -220,6 +224,25 @@ public final class MainActivity extends Activity {
             default: v = home();
         }
         body.addView(v);
+        if (keepY > 0) {
+            android.widget.ScrollView now = firstScroll(body);
+            if (now != null) {
+                now.scrollTo(0, keepY);                                  // before the first frame, so it does not flash at the top
+                now.post(() -> now.scrollTo(0, keepY));                  // and again once its content is measured
+            }
+        }
+    }
+
+    private String shownPage = "";
+
+    /** The scrolling list of a page (the first ScrollView inside it). */
+    private static android.widget.ScrollView firstScroll(View v) {
+        if (v instanceof android.widget.ScrollView) return (android.widget.ScrollView) v;
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) { android.widget.ScrollView s = firstScroll(g.getChildAt(i)); if (s != null) return s; }
+        }
+        return null;
     }
 
     // ================================================================ language, sync
@@ -322,6 +345,7 @@ public final class MainActivity extends Activity {
                     } catch (IOException | RuntimeException ignored) { }
                 }
                 Map<String, Object> ex = Json.obj(pulled.get("extra"));
+                if (!Json.obj(ex.get("card_profile")).isEmpty()) app.prefs().edit().putString("card_profile_" + app.lang(), Json.write(Json.obj(ex.get("card_profile")))).apply();   // the PC's note type and field map
                 Details.take(Json.arr(ex.get("meta")), System.currentTimeMillis());
                 Details.pushed();
                 Map<String, Object> hm = Json.obj(ex.get("home"));
@@ -1125,6 +1149,47 @@ public final class MainActivity extends Activity {
         });
     }
 
+    /** Transcripts: the phone cannot run Whisper, but the PC can. It is asked to make the subtitles of this video (it must have the video: one it
+     *  watches from), and the phone asks every 20 seconds until they are there, then keeps the file next to the video. */
+    private void whisperOnPc(File f) {
+        PcLink pc = app.pc();
+        if (pc == null) { Ui.toast(this, "Paste the PC link in Settings first: Whisper runs on the PC"); return; }
+        String lang = vlang(f).isEmpty() ? app.lang() : vlang(f);
+        if (lang.equals("en") && !app.lang().equals("en")) lang = app.lang();
+        final String lg = lang, name = Player.videoName(f);
+        Ui.toast(this, "Asking the PC to transcribe it…");
+        app.bg(() -> {
+            try {
+                Map<String, Object> body = new java.util.LinkedHashMap<>();
+                body.put("lang", lg); body.put("video", name);
+                Map<String, Object> r = pc.post("/api/pocket/transcribe", body, 60000);
+                boolean told = false;
+                for (int i = 0; i < 270; i++) {                                    // up to 90 minutes
+                    String st = Json.str(r.get("state"), "none");
+                    if (st.equals("missing")) { String why = Json.str(r.get("error"), "The PC does not have this video."); app.post(() -> Ui.alert(this, "Not on the PC", why)); return; }
+                    if (st.equals("ready")) {
+                        List<Object> subs = Json.arr(r.get("subs"));
+                        if (subs.isEmpty()) break;
+                        Map<String, Object> x = Json.obj(subs.get(0));
+                        String ext = Json.str(x.get("name"), ".srt").replaceAll("^.*(\\.[A-Za-z0-9]+)$", "$1");
+                        String stem = Player.niceName(f);
+                        File dest = new File(app.videoDir(), stem + "." + lg + ext);
+                        for (int k = 2; dest.exists(); k++) dest = new File(app.videoDir(), stem + "." + lg + k + ext);
+                        pc.download("/api/pocket/file?id=" + PcLink.enc(Json.str(x.get("id"), "")), dest, null);
+                        if (vlang(f).isEmpty()) setVideoLang(f, lg);
+                        File saved = dest;
+                        app.post(() -> { Ui.toast(this, "Subtitles from the PC: " + saved.getName()); show(); });
+                        return;
+                    }
+                    if (!told) { told = true; app.post(() -> Ui.toast(this, "The PC is transcribing (a few minutes for an episode). The subtitles arrive by themselves while the app is open.")); }
+                    try { Thread.sleep(20000); } catch (InterruptedException ie) { return; }
+                    r = pc.get("/api/pocket/transcribe?lang=" + PcLink.enc(lg) + "&video=" + PcLink.enc(name), 30000);
+                }
+                app.post(() -> Ui.alert(this, "Still working", "The PC has not finished yet. Open this menu again later: the subtitles are fetched when they are there."));
+            } catch (IOException ex) { app.post(() -> Ui.alert(this, "Could not ask the PC", explain(ex))); }
+        });
+    }
+
     private void getSub(File f, String lang, Map<String, Object> item, Shows.Ep e) {
         PcLink pc = app.pc();
         if (pc == null) return;
@@ -1351,11 +1416,12 @@ public final class MainActivity extends Activity {
         String sub = android.text.TextUtils.join(" · ", bits);
         LinearLayout it = Ui.item(this, head, sub, v -> openVideo(f));
         it.setOnLongClickListener(v -> {
-            String[] acts = {done ? "Mark as not watched" : "Mark as watched", linked ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles", "Set language (now: " + (vlang(f).isEmpty() ? "not set" : vlang(f)) + ")", "Find subtitles on the internet (through the PC)", "Add to a playlist…"};
+            String[] acts = {done ? "Mark as not watched" : "Mark as watched", linked ? "Remove from the app (the video itself stays)" : "Delete this video and its subtitles", "Set language (now: " + (vlang(f).isEmpty() ? "not set" : vlang(f)) + ")", "Find subtitles on the internet (through the PC)", "Add to a playlist…", "Make subtitles with Whisper (on the PC)"};
             Ui.choose(this, vtitle(f), acts, -1, w -> {
                 if (w == 2) { pickVideoLang(f); return; }
                 if (w == 3) { findSubs(f); return; }
                 if (w == 4) { addToPlaylist(f); return; }
+                if (w == 5) { whisperOnPc(f); return; }
                 if (w == 0) {
                     android.content.SharedPreferences.Editor ed = app.prefs().edit().putBoolean("vdone_" + f.getName(), !done).putLong("vpost_" + f.getName(), System.currentTimeMillis());
                     if (done) ed.putFloat("vpos_" + f.getName(), 0);

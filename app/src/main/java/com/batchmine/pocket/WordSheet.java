@@ -72,7 +72,10 @@ public final class WordSheet {
         return lang;
     }
 
-    public static void show(Activity a, String lang, String word0, Cards.Request base, Changed onChange) {
+    public static void show(Activity a, String lang, String word0, Cards.Request base, Changed onChange) { show(a, lang, word0, base, onChange, null); }
+
+    /** CLOSED runs when the sheet goes away (the player keeps the video paused until then). */
+    public static void show(Activity a, String lang, String word0, Cards.Request base, Changed onChange, Runnable closed) {
         App app = App.get();
         Dialog d = new Dialog(a, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar);
         d.requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -112,7 +115,14 @@ public final class WordSheet {
         TextView senT = Ui.text(a, "", 15, Ui.TEXT);
         senT.setPadding(0, 0, 0, Ui.dp(a, 2));
         android.widget.EditText senE = Ui.input(a, "", "sentence for the card");
-        senE.setMinLines(2);
+        senE.setSingleLine(false);                           // the whole sentence, wrapped over several lines, not one long line to scroll through
+        senE.setHorizontallyScrolling(false);
+        senE.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        senE.setMinLines(3);
+        senE.setMaxLines(8);
+        senE.setGravity(Gravity.TOP | Gravity.START);
+        senE.setTextSize(16);
+        senE.setLineSpacing(0, 1.15f);
         senE.setVisibility(android.view.View.GONE);
         LinearLayout ctxRow = Ui.row(a);
         senBox.addView(Ui.text(a, "Sentence (tap to change)", 12, Ui.DIM));
@@ -233,7 +243,10 @@ public final class WordSheet {
         d.setContentView(box);
         Window w = d.getWindow();
         if (w != null) {
-            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (int) (a.getResources().getDisplayMetrics().heightPixels * (a.getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ? 0.95 : 0.86)));
+            w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));      // the dialog theme's own frame left a strip free on each side
+            w.getDecorView().setPadding(0, 0, 0, 0);
+            int sw = a.getResources().getDisplayMetrics().widthPixels, cap = Ui.dp(a, 640);    // the whole width, unless that is very wide (a tablet, landscape)
+            w.setLayout(sw > cap * 1.15 ? cap : ViewGroup.LayoutParams.MATCH_PARENT, (int) (a.getResources().getDisplayMetrics().heightPixels * (a.getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE ? 0.95 : 0.86)));
             w.setGravity(Gravity.BOTTOM);
             w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
             w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
@@ -276,6 +289,7 @@ public final class WordSheet {
                 java.util.Set<Integer> only = picks.set;
                 for (int k = 0; k < res[0].hits.size(); k++) if (only.contains(k)) { r.glosses = res[0].hits.get(k).glosses; break; }
                 r.defHtml = Dictionaries.allMeanings(res[0], only);
+                r.richBy = Dictionaries.meaningsByLabel(res[0], only, Cards.dictLabels(lang));
                 r.picked = new java.util.LinkedHashMap<>();                 // the single meanings ticked: the short definition
                 for (Object o : picks.defs) {
                     Map<String, Object> x = Json.obj(o);
@@ -291,9 +305,9 @@ public final class WordSheet {
             d.dismiss();
             Cards.make(a, r, () -> { if (onChange != null) onChange.changed(); });
         });
-        if (Ui.gone(a)) return;
+        if (Ui.gone(a)) { if (closed != null) closed.run(); return; }
         d.show();
-        d.setOnDismissListener(x -> { if (webF != null) try { webF.destroy(); } catch (RuntimeException ignored) { } });
+        d.setOnDismissListener(x -> { if (webF != null) try { webF.destroy(); } catch (RuntimeException ignored) { } if (closed != null) closed.run(); });
         Runnable[] lookup = {null};
         lookup[0] = () -> {
             final String wd = wIn.getText().toString().trim();

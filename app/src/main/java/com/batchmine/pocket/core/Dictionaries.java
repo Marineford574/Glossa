@@ -108,6 +108,34 @@ public final class Dictionaries {
         return sb.toString();
     }
 
+    /** The meanings of the entries in ONLY (null: all), one HTML block per definition language (label IT / DE / EN ...): which language a dictionary is
+     *  comes from LABELS (the PC's dictionary name -> label), else from its name ("wty-it-de" -> DE). Dictionaries of no known label are left out. */
+    public static Map<String, String> meaningsByLabel(Result r, Set<Integer> only, Map<String, String> labels) {
+        Map<String, List<String>> by = new LinkedHashMap<>();
+        for (int hi = 0; hi < r.hits.size(); hi++) {
+            if (only != null && !only.contains(hi)) continue;
+            Hit h = r.hits.get(hi);
+            String lab = labels == null ? null : labels.get(h.dict);
+            if (lab == null) {
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(?:wty|kty)[-_][a-z]{2,3}[-_]([a-z]{2,3})$", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(h.dict.trim());
+                if (m.find()) lab = m.group(1).toUpperCase(java.util.Locale.ROOT);
+            }
+            if (lab == null) continue;
+            List<String> l = by.get(lab);
+            if (l == null) by.put(lab, l = new ArrayList<>());
+            for (String g : h.glosses) if (!g.isEmpty() && !l.contains(g)) l.add(g);
+        }
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> e : by.entrySet()) {
+            if (e.getValue().isEmpty()) continue;
+            StringBuilder sb = new StringBuilder("<ol>");
+            int n = 0;
+            for (String g : e.getValue()) { if (++n > 8) break; sb.append("<li>").append(g.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")).append("</li>"); }
+            out.put(e.getKey(), sb.append("</ol>").toString());
+        }
+        return out;
+    }
+
     /** The spellings to look a word up by. */
     public static List<String> variants(String w) {
         LinkedHashSet<String> v = new LinkedHashSet<>();

@@ -36,6 +36,7 @@ public final class Cards {
         public List<String> glosses = new ArrayList<>();
         /** The single meanings ticked in the word card, by the language of the definitions (the PC's short definition fields). */
         public Map<String, List<String>> picked = new LinkedHashMap<>();
+        public Map<String, String> richBy = new LinkedHashMap<>();   // the meanings of the ticked entries by definition language (IT / DE / EN …)
         public String defHtml = "", freq = "", wordAudio = "";   // all dictionaries' meanings (HTML), frequency rank, "yes": add the word spoken
         public String video = "", videoName = "";          // the video (a content:// or file:// link) and its file name
         public double start, end, frameAt = -1;
@@ -45,7 +46,7 @@ public final class Cards {
         public Request copy() {
             Request r = new Request();
             r.lang = lang; r.kind = kind; r.word = word; r.surface = surface; r.sentence = sentence; r.translation = translation;
-            r.ipa = ipa; r.title = title; r.glosses = new ArrayList<>(glosses); r.picked = new LinkedHashMap<>(picked); r.video = video; r.videoName = videoName; r.defHtml = defHtml; r.freq = freq; r.wordAudio = wordAudio;
+            r.ipa = ipa; r.title = title; r.glosses = new ArrayList<>(glosses); r.picked = new LinkedHashMap<>(picked); r.video = video; r.videoName = videoName; r.defHtml = defHtml; r.richBy = new LinkedHashMap<>(richBy); r.freq = freq; r.wordAudio = wordAudio;
             r.start = start; r.end = end; r.frameAt = frameAt; r.before = before; r.after = after;
             return r;
         }
@@ -63,7 +64,40 @@ public final class Cards {
             {"picture", "Picture", "picture|image|screenshot|immagine|bild|slika"},
             {"wordaudio", "Word spoken (phone voice)", "word audio|pronunciation audio|audio word|wordaudio|vokabel_audio|vokabel audio|wort audio|wortaudio"},
             {"frequency", "Frequency", "frequency|freq|rank|häufigkeit|frequenza"},
-            {"source", "Source", "source|from|fonte|quelle"}};
+            {"source", "Source", "source|from|fonte|quelle"},
+            // per definition language, as the PC's note types have them (Italian: Definizioni IT + Definizione IT, German: Definitionen 1 / 2 …)
+            {"rich_it", "Definitions, Italian (full)", "definizioni it"}, {"rich_de", "Definitions, German (full)", "definizioni de"}, {"rich_en", "Definitions, English (full)", "definizioni en"},
+            {"short_it", "Short definition, Italian (ticked)", "definizione it"}, {"short_de", "Short definition, German (ticked)", "definizione de|definitionen 1"}, {"short_en", "Short definition, English (ticked)", "definizione en|definitionen 2"},
+            {"short_hr", "Short definition, Croatian (ticked)", "definicija"}};
+
+    /** The PC's profile of a language (note type, deck, field names, definition fields), as the last sync brought it. */
+    static Map<String, Object> profile(String lang) {
+        return Json.obj(Json.parse(App.get().prefs().getString("card_profile_" + lang, "{}")));
+    }
+
+    /** Dictionary name -> definition language label (IT / DE / EN), from the PC's YOMITAN_DICTS. */
+    static Map<String, String> dictLabels(String lang) {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : Json.obj(profile(lang).get("dicts")).entrySet()) m.put(e.getKey(), Json.str(e.getValue(), ""));
+        return m;
+    }
+
+    /** Role -> field name the PC uses for it. */
+    static Map<String, String> pcFields(String lang) {
+        Map<String, String> out = new LinkedHashMap<>();
+        Map<String, Object> pr = profile(lang), f = Json.obj(pr.get("fields"));
+        String[][] same = {{"sentence", "sentence"}, {"translation", "translation"}, {"image", "picture"}, {"audio", "audio"}, {"word_audio", "wordaudio"},
+                {"word", "word"}, {"gloss", "definition"}, {"freq", "frequency"}, {"ipa", "ipa"}, {"source", "source"}};
+        for (String[] x : same) if (!Json.str(f.get(x[0]), "").isEmpty()) out.put(x[1], Json.str(f.get(x[0]), ""));
+        for (Map.Entry<String, Object> e : Json.obj(pr.get("pick")).entrySet()) out.put("short_" + labelCode(e.getKey()), Json.str(e.getValue(), ""));
+        for (Map.Entry<String, Object> e : Json.obj(pr.get("rich")).entrySet()) out.put("rich_" + labelCode(e.getKey()), Json.str(e.getValue(), ""));
+        return out;
+    }
+
+    static String labelCode(String label) {
+        String l = label == null ? "" : label.toLowerCase(Locale.ROOT);
+        return l.equals("croatian") ? "hr" : l.equals("german") ? "de" : l.equals("english") ? "en" : l.equals("italian") ? "it" : l;
+    }
 
     public static boolean useAnki() {
         String m = App.get().prefs().getString("card_mode", "");
@@ -98,8 +132,16 @@ public final class Cards {
                 v.put("translation", esc(r.translation));
                 List<String> chosen = new ArrayList<>();
                 for (List<String> l : r.picked.values()) chosen.addAll(l);
-                v.put("definition", !chosen.isEmpty() && !map.containsKey("short") ? glossHtml(chosen) : r.defHtml.isEmpty() ? glossHtml(r.glosses) : r.defHtml);
+                boolean perLang = false;
+                for (String k : map.keySet()) if (k.startsWith("rich_")) perLang = true;
+                if (!perLang) v.put("definition", !chosen.isEmpty() && !map.containsKey("short") ? glossHtml(chosen) : r.defHtml.isEmpty() ? glossHtml(r.glosses) : r.defHtml);
                 v.put("short", glossHtml(chosen));
+                for (Map.Entry<String, List<String>> e : r.picked.entrySet()) {          // the ticked meanings, in the short field of their language (the PC's layout)
+                    List<String> items = new ArrayList<>(e.getValue());
+                    if (items.contains("-")) items = java.util.Arrays.asList("-");
+                    if (!items.isEmpty()) v.put("short_" + labelCode(e.getKey()), items.size() == 1 ? esc(items.get(0)) : glossHtml(items));
+                }
+                for (Map.Entry<String, String> e : r.richBy.entrySet()) v.put("rich_" + labelCode(e.getKey()), e.getValue());
                 v.put("frequency", esc(r.freq));
                 v.put("ipa", esc(r.ipa));
                 v.put("source", esc(r.title + (r.kind.equals("video") ? " " + Ui.time(r.start) : "")));
@@ -207,7 +249,10 @@ public final class Cards {
         int[] mi = {0}, di = {0};
         for (int i = 0; i < models.size(); i++) if (models.get(i).id == mid) mi[0] = i;
         if (mid < 0) for (int i = 0; i < models.size(); i++) if (models.get(i).name.toLowerCase(Locale.ROOT).contains(lang)) { mi[0] = i; break; }
+        String pcModel = Json.str(profile(lang).get("model"), ""), pcDeck = Json.str(profile(lang).get("deck"), "");
+        if (mid < 0 && !pcModel.isEmpty()) for (int i = 0; i < models.size(); i++) if (models.get(i).name.equalsIgnoreCase(pcModel)) { mi[0] = i; break; }
         for (int i = 0; i < decks.size(); i++) if (decks.get(i).id == did) di[0] = i;
+        if (did < 0 && !pcDeck.isEmpty()) for (int i = 0; i < decks.size(); i++) if (decks.get(i).name.equalsIgnoreCase(pcDeck)) { di[0] = i; break; }
         int[][] sel = {choices(models.get(mi[0]), lang, p, false)};
 
         LinearLayout body = Ui.col(a);
@@ -271,7 +316,7 @@ public final class Cards {
 
     /** Field of each role (index, -1 = none): the saved ones for this note type, else guessed from the field names. */
     static int[] choices(AnkiDroid.Model m, String lang, SharedPreferences p, boolean fresh) {
-        int[] out = assign(m.fields);
+        int[] out = assign(m.fields, lang);
         if (!fresh && m.id == p.getLong("anki_model_" + lang, -1)) {
             Map<String, Integer> saved = fieldMap(lang);
             for (int i = 0; i < ROLES.length; i++) {
@@ -284,12 +329,20 @@ public final class Cards {
 
     /** Guesses which field is which from the names, each field used once: the most specific matches are placed first
      *  ("Worthäufigkeit" is the frequency, not the word, because "häufigkeit" says more than "wort"). */
-    static int[] assign(String[] fields) {
+    static int[] assign(String[] fields, String lang) {
         int[] out = new int[ROLES.length];
         java.util.Arrays.fill(out, -1);
+        boolean[] used = new boolean[fields.length];
+        Map<String, String> pc = pcFields(lang);                  // first what the PC does: the same field names, the same roles
+        for (int r = 0; r < ROLES.length; r++) {
+            String want = pc.get(ROLES[r][0]);
+            if (want == null || want.isEmpty()) continue;
+            for (int f = 0; f < fields.length; f++) if (!used[f] && fields[f].equalsIgnoreCase(want)) { out[r] = f; used[f] = true; break; }
+        }
         List<int[]> cands = new ArrayList<>();                   // {score, role, field}
         for (int r = 0; r < ROLES.length; r++)
             for (int f = 0; f < fields.length; f++) {
+                if (out[r] >= 0 || used[f]) continue;
                 String n = fields[f].toLowerCase(Locale.ROOT).trim();
                 int best = 0;
                 for (String alt : ROLES[r][2].split("\\|")) {
@@ -299,7 +352,6 @@ public final class Cards {
                 if (best > 0) cands.add(new int[]{best, r, f});
             }
         cands.sort((x, y) -> y[0] - x[0]);
-        boolean[] used = new boolean[fields.length];
         for (int[] c : cands) if (out[c[1]] < 0 && !used[c[2]]) { out[c[1]] = c[2]; used[c[2]] = true; }
         return out;
     }
