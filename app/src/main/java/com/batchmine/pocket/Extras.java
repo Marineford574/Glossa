@@ -107,5 +107,8 @@ final class Extras {
         homeCard("week", 200, (a, l) -> a.homeWeek(l));
         homeCard("review", 300, (a, l) -> a.homeReview(l));
         homeCard("trouble", 400, (a, l) -> a.homeTrouble(l));
+        DefLangs.register();                               // 3  definition-language switches follow the PC
+        Levels.register();                                 // 1  CEFR levels: chip + table from the PC
+        Genders.register();                                // 4  noun gender from the wty files on the PC
     }
 }

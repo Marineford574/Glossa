@@ -246,6 +246,8 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume(); show();
+        Reminder.touch(this);
+        Reminder.schedule(this);
         Stopwatch.tidy();
         if (!updateAsked) {
             updateAsked = true;
@@ -2079,6 +2081,16 @@ public final class MainActivity extends Activity {
         l.addView(Ui.hint(this, "Sound and picture of a video line are cut on the phone (MP4 / MKV). AAC, Opus and Vorbis are cut as they are; MP3, FLAC and similar become a small .wav. With no decoder (AC-3, often) the card is left to the PC."));
 
         // ---- backup
+        l.addView(Ui.section(this, "Reminder"));
+        g = Ui.group(this);
+        Ui.switchRow(g, "Remind me once a day", "A notification at the time below, on days you have not opened the app yet.", Reminder.on(app.prefs()),
+                (b, on) -> { Reminder.enable(this, on); });
+        int rm = Reminder.minutes(app.prefs());
+        Ui.pickRow(g, "Time", String.format(Locale.getDefault(), "%02d:%02d", rm / 60, rm % 60), v ->
+                new android.app.TimePickerDialog(this, (tp, h, mi) -> { app.prefs().edit().putInt("rem_min", h * 60 + mi).apply(); Reminder.schedule(this); show(); },
+                        rm / 60, rm % 60, true).show());
+        Ui.add(l, g, 0);
+
         l.addView(Ui.section(this, "Backup"));
         g = Ui.group(this);
         Ui.pickRow(g, "Make a backup", "words, details, settings, books, tray", v -> {

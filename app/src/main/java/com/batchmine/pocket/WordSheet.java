@@ -223,6 +223,16 @@ public final class WordSheet {
             sites.addView(lbl);
             String w = wIn.getText().toString().trim();
             if (w.isEmpty()) return;
+            String lem = res[0] != null && res[0].found() ? res[0].lemma() : w;
+            if (Conj.offered(lang, lem)) {                 // 5  the PC's conjugation table
+                TextView cj = Ui.pill(a, "Conjugation", Ui.ACCENT, Ui.CARD2);
+                cj.setPadding(Ui.dp(a, 10), Ui.dp(a, 4), Ui.dp(a, 10), Ui.dp(a, 4));
+                cj.setTextSize(13);
+                cj.setOnClickListener(v -> Conj.show(a, lang, lem));
+                LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                clp.rightMargin = Ui.dp(a, 6);
+                sites.addView(cj, clp);
+            }
             for (String[] site : com.batchmine.pocket.core.Sites.urls(lang, w)) {
                 TextView chip = Ui.pill(a, site[0], Ui.ACCENT, Ui.CARD2);
                 chip.setPadding(Ui.dp(a, 10), Ui.dp(a, 4), Ui.dp(a, 10), Ui.dp(a, 4));
@@ -376,6 +386,7 @@ public final class WordSheet {
                         meta.addView(fc, flp);
                     }
                     drawLangTabs(a, langTabs, r, lang, webF);
+                    drawSites.run();
                     if (webF != null) webF.loadDataWithBaseURL(null, html, "text/html", "utf-8", null);
                     else if (plainF != null) plainF.setText(android.text.Html.fromHtml(html.replaceAll("(?s)<style>.*?</style>", ""), android.text.Html.FROM_HTML_MODE_COMPACT));
                     refreshKnown.run();
@@ -405,7 +416,7 @@ public final class WordSheet {
     private static void drawLangTabs(Activity a, LinearLayout holder, Dictionaries.Result r, String lang, WebView web) {
         holder.removeAllViews();
         java.util.List<String> ls = new java.util.ArrayList<>();
-        for (Dictionaries.Hit h : r.hits) { String g = glossLang(h.dict, lang); if (!ls.contains(g)) ls.add(g); }
+        for (Dictionaries.Hit h : r.hits) { String g = glossLang(h.dict, lang); if (DefLangs.on(lang, g) && !ls.contains(g)) ls.add(g); }
         if (ls.size() < 2 || web == null) return;
         String[] names = new String[ls.size() + 1];
         names[0] = "All";
@@ -466,7 +477,7 @@ public final class WordSheet {
           // game controller: the framed definition (D-pad up / down), A ticks it
           .append("function padDef(d){var xs=Array.prototype.slice.call(document.querySelectorAll('input.gpick'));if(!xs.length)return 0;var cur=document.querySelector('input.gpick.padcur'),i=cur?xs.indexOf(cur):-1;if(cur){cur.classList.remove('padcur');(cur.closest('li')||cur.parentNode).classList.remove('padrow')}i=i<0?(d>0?0:xs.length-1):Math.max(0,Math.min(xs.length-1,i+d));var x=xs[i];x.classList.add('padcur');var r=x.closest('li')||x.parentNode;r.classList.add('padrow');r.scrollIntoView({block:'nearest'});return xs.length}")
           .append("function padSel(){var c=document.querySelector('input.gpick.padcur');if(!c)return 'none';c.click();return 'ok'}")
-          .append("function showLang(l){document.querySelectorAll('.blk').forEach(function(b){b.style.display=(!l||b.getAttribute('data-l')===l)?'':'none'})}")
+          .append("function showLang(l){document.querySelectorAll('.blk').forEach(function(b){b.style.display=((!l||b.getAttribute('data-l')===l)&&!b.getAttribute('data-off'))?'':'none'})}")
           .append("document.addEventListener('DOMContentLoaded',boxes)")
           .append("</script></head><body>");
         if (!r.found()) {
@@ -477,7 +488,8 @@ public final class WordSheet {
         int i = 0;
         for (Dictionaries.Hit h : r.hits) {
             String key = h.term + "|" + h.via;
-            sb.append("<div class=blk data-i=").append(i).append(" data-l='").append(esc(glossLang(h.dict, lang))).append("'><div class=hd><input class=pk type=checkbox data-i=").append(i).append(on.contains(i) ? " checked" : "")
+            String gl = glossLang(h.dict, lang);
+            sb.append("<div class=blk data-i=").append(i).append(DefLangs.on(lang, gl) ? "" : " data-off=1 style='display:none'").append(" data-l='").append(esc(gl)).append("'><div class=hd><input class=pk type=checkbox data-i=").append(i).append(on.contains(i) ? " checked" : "")
               .append(" onchange='pick()'><span>").append(esc(h.term)).append(" <small>").append(esc(h.pos)).append(" · ").append(esc(h.dict)).append("</small></span></div>");
             if (h.via != null && !key.equals(last)) sb.append("<div class=via>").append(esc(h.via)).append("</div>");
             last = key;
