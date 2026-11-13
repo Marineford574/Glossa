@@ -46,6 +46,7 @@ public final class Reader extends Activity {
     private View bookFill;
     private android.widget.Button backBtn, nextBtn;
     private LinearLayout undoBar;
+    private WordBar wordBar;
     private float size = 19;
     private int base, count;                     // the page on screen: paragraphs base .. base+count-1 of the chapter
     private boolean full;                    // fullscreen reading: the bars are hidden
@@ -133,6 +134,8 @@ public final class Reader extends Activity {
         undoBar = Ui.row(this);
         undoBar.setVisibility(View.GONE);
         root.addView(undoBar);
+        wordBar = new WordBar(this, () -> draw(true));
+        root.addView(wordBar.view());
         navBarV = navBar();
         root.addView(navBarV);
         FrameLayout frame = new FrameLayout(this);
@@ -280,7 +283,7 @@ public final class Reader extends Activity {
         }
     }
 
-    @Override public void onBackPressed() { if (full) fullscreen(false); else super.onBackPressed(); }
+    @Override public void onBackPressed() { if (wordBar != null && wordBar.showing()) wordBar.hide(); else if (full) fullscreen(false); else super.onBackPressed(); }
 
     // ---------------------------------------------------------------- pages
     /** How much of a chapter is on one page: 0 = the whole chapter, otherwise about this many characters. */
@@ -678,7 +681,8 @@ public final class Reader extends Activity {
             if (si + k < sents.length) r.after.add(new Cards.Ctx(sents[si + k], 0, 0));
         }
         r.title = book.title;
-        WordSheet.show(this, lang(), word, r, () -> draw(true));
+        if (app.flag("rd_bar", true)) wordBar.show(lang(), word, r);       // a bar at the bottom first; its ⌃ opens the whole sheet
+        else WordSheet.show(this, lang(), word, r, () -> draw(true));
     }
 
     /** Marks the unknown words of this chapter as known (after you have read it), with the list to untick first. */

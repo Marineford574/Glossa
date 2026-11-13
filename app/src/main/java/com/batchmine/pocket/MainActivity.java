@@ -1830,37 +1830,113 @@ public final class MainActivity extends Activity {
     // ================================================================ words
     private String wordFilter = "";
 
+    private int wordTab;                                   // 0 saved, 1 tray, 2 waiting to be sent, 3 known
+
     private View words() {
         LinearLayout l = Ui.col(this);
-        l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 12));
+        int pad = Ui.dp(this, 16);
+        l.setPadding(pad, Ui.dp(this, 8), pad, pad);
         WordStore ws = app.store();
         List<Map<String, Object>> pend = ws.pending();
-        if (!pend.isEmpty()) {
-            LinearLayout head = Ui.row(this);
-            head.addView(Ui.weight(Ui.title(this, pend.size() + " card(s) waiting"), 1));
-            head.addView(Ui.small(this, "Send now", v -> sync()));
-            Ui.add(l, head, 0);
-            for (Map<String, Object> c : pend) {
-                String id = Json.str(c.get("id"), "");
-                Ui.add(l, Ui.item(this, Json.str(c.get("word"), ""), Json.str(c.get("sentence"), ""), v ->
-                        Ui.choose(this, Json.str(c.get("word"), ""), new String[]{"Remove this card"}, -1, i -> { ws.removePending(id); show(); })), 6);
-            }
-        }
         List<Map<String, Object>> saved = ws.saved();
-        l.addView(Ui.title(this, "Saved words" + (saved.isEmpty() ? "" : " (" + saved.size() + ")")));
-        if (saved.isEmpty()) l.addView(Ui.hint(this, "Tap “Save” in a word card to keep a word for later."));
-        if (saved.size() > 6) {
-            android.widget.EditText q = Ui.input(this, wordFilter, "Search words, sentences, sources");
-            q.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
-            q.addTextChangedListener(new android.text.TextWatcher() {
-                @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
-                @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
-                @Override public void afterTextChanged(android.text.Editable e) { wordFilter = e.toString(); fillSaved(l, saved, q); }
-            });
-            Ui.add(l, q, 8);
+        int tray = Tray.count();
+        Flow acts = new Flow(this, 8);
+        acts.addView(Kit.textButton(this, "Look up a sentence", "Look up a sentence", false, v -> Lookup.open(this, null)));
+        if (!pend.isEmpty()) acts.addView(Kit.textButton(this, "Send now", "Send the waiting cards to the PC", false, v -> sync()));
+        Kit.add(l, acts, 12);
+        // the tabs: a tab with nothing in it is left out (Saved and Known always stay)
+        String[] tabs = {"Saved " + saved.size(), tray > 0 || wordTab == 1 ? "Tray " + tray : null,
+                pend.isEmpty() && wordTab != 2 ? null : "Waiting " + pend.size(), "Known"};
+        if (tabs[wordTab] == null) wordTab = 0;
+        Kit.add(l, Kit.chips(this, tabs, wordTab, i -> { wordTab = i; show(); }), 12);
+        switch (wordTab) {
+            case 1:
+                Kit.add(l, Kit.actionCard(this, tray + (tray == 1 ? " card in the tray" : " cards in the tray"),
+                        "Look them over, change or drop some, then make them all at once.", "Review", v -> Tray.show(this, this::show)));
+                break;
+            case 2:
+                l.addView(Ui.hint(this, "Made on the phone, sent to the PC (and Anki) at the next sync."));
+                for (Map<String, Object> c : pend) {
+                    String id = Json.str(c.get("id"), "");
+                    Kit.add(l, wordRow(Json.str(c.get("word"), ""), Json.str(c.get("sentence"), ""), null,
+                            v -> Ui.choose(this, Json.str(c.get("word"), ""), new String[]{"Remove this card"}, -1, i -> { ws.removePending(id); show(); })), 8);
+                }
+                break;
+            case 3:
+                knownTab(l, ws);
+                break;
+            default:
+                if (saved.isEmpty()) { l.addView(Ui.hint(this, "Tap “Save” in a word card to keep a word for later.")); break; }
+                android.widget.EditText q = Ui.input(this, wordFilter, "Search your words");
+                q.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+                q.addTextChangedListener(new android.text.TextWatcher() {
+                    @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+                    @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
+                    @Override public void afterTextChanged(android.text.Editable e) { wordFilter = e.toString(); fillSaved(l, saved, q); }
+                });
+                Kit.add(l, q, 8);
+                fillSaved(l, saved, null);
         }
-        fillSaved(l, saved, null);
         return Ui.scroll(this, l);
+    }
+
+    /** One word in a list: the word with its fact chips (level, gender … from Extras), the sentence under it, an optional button at the end. */
+    private LinearLayout wordRow(String w, String sentence, View end, View.OnClickListener l) {
+        LinearLayout row = Kit.card(this, l);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout text = Ui.col(this);
+        LinearLayout top = Ui.row(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView wt = Ui.text(this, w, 16, Ui.TEXT);
+        wt.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        top.addView(wt);
+        for (Extras.Fact f : Extras.facts(app.lang(), w)) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.leftMargin = Ui.dp(this, 6);
+            top.addView(Kit.fact(this, f.text, f.kind), lp);
+        }
+        text.addView(top);
+        if (!sentence.isEmpty()) {
+            TextView st = Ui.text(this, sentence, 13, Ui.DIM);
+            st.setSingleLine(true);
+            st.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            text.addView(st);
+        }
+        row.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (end != null) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.leftMargin = Ui.dp(this, 10);
+            row.addView(end, lp);
+        }
+        return row;
+    }
+
+    /** Known: how many, and a box to check one word and switch it (known ↔ not known). */
+    private void knownTab(LinearLayout l, WordStore ws) {
+        Kit.add(l, Kit.tiles(this, Kit.stat(this, String.format(Locale.getDefault(), "%,d", ws.knownCount()), "known words", false, null)), 12);
+        android.widget.EditText q = Ui.input(this, "", "Is a word known? Type it");
+        q.setSingleLine(true);
+        Kit.add(l, q, 8);
+        LinearLayout ans = Ui.col(this);
+        l.addView(ans);
+        Runnable[] draw = {null};
+        draw[0] = () -> {
+            ans.removeAllViews();
+            String w = q.getText().toString().trim().toLowerCase(Locale.ROOT);
+            if (w.isEmpty()) return;
+            boolean k = ws.isKnown(w);
+            ans.addView(wordRow(w, k ? "Known" : "Not known", Kit.textButton(this, k ? "Not known" : "Known", k ? "Mark as not known" : "Mark as known", !k, v -> {
+                java.util.Set<String> one = java.util.Collections.singleton(w);
+                if (ws.isKnown(w)) ws.markUnknown(new java.util.HashSet<>(one)); else ws.markKnown(new java.util.HashSet<>(one));
+                draw[0].run();
+            }), v -> WordSheet.show(this, app.lang(), w, null, () -> draw[0].run())));
+        };
+        q.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void afterTextChanged(android.text.Editable e) { draw[0].run(); }
+        });
     }
 
     /** The saved words that match the search; redrawn in place while you type (the search box keeps its focus). */
@@ -1871,13 +1947,14 @@ public final class MainActivity extends Activity {
         for (Map<String, Object> s : saved) {
             String w = Json.str(s.get("word"), ""), sn = Json.str(s.get("sentence"), ""), src = Json.str(s.get("source"), "");
             if (!f.isEmpty() && !(w + " " + sn + " " + src).toLowerCase(Locale.ROOT).contains(f)) continue;
-            LinearLayout it = Ui.item(this, w, sn + (src.isEmpty() ? "" : "\n" + src), v -> {
+            View.OnClickListener open = v -> {
                 Cards.Request r = new Cards.Request();
                 r.lang = app.lang(); r.sentence = sn; r.title = src;
-                WordSheet.show(this, app.lang(), w, r, this::show);
-            });
+                WordSheet.show(this, app.lang(), w, sn.isEmpty() ? null : r, this::show);
+            };
+            LinearLayout it = wordRow(w, sn, sn.isEmpty() ? null : Kit.textButton(this, "Card", "Make a card", true, open), open);
             it.setTag("saved");
-            Ui.add(l, it, 6);
+            Kit.add(l, it, 8);
             if (++shown >= 150) break;
         }
         if (shown == 0 && !saved.isEmpty()) { TextView t = Ui.hint(this, "Nothing matches “" + wordFilter + "”."); t.setTag("saved"); l.addView(t); }
@@ -1888,9 +1965,6 @@ public final class MainActivity extends Activity {
         LinearLayout l = Ui.col(this);
         int pad = Ui.dp(this, 12);
         l.setPadding(pad, 0, pad, pad * 2);
-        TextView head = Ui.title(this, "Settings");
-        l.addView(head);
-
         // ---- the PC
         l.addView(Ui.section(this, "The PC"));
         LinearLayout g = Ui.group(this);
@@ -2049,6 +2123,52 @@ public final class MainActivity extends Activity {
         File last = new File(getFilesDir(), "crash-seen.txt");
         Ui.srow(g, "Problem report", last.isFile() ? "Something went wrong last time: copy the report and send it" : "Nothing has gone wrong so far",
                 last.isFile() ? Ui.small(this, "Show", v -> problemReport("Problem report", last)) : null, null);
+        Ui.add(l, g, 0);
+        return settingsPage(l);
+    }
+
+    private String settingsSec = "";                       // the settings group that is open ("" = the list of groups)
+
+    /** The long list of settings, regrouped: a list of groups with what each holds, tap one to open it (the groups' own rows are unchanged). */
+    private View settingsPage(LinearLayout all) {
+        java.util.LinkedHashMap<String, List<View>> secs = new java.util.LinkedHashMap<>();
+        List<View> cur = null;
+        for (int i = 0; i < all.getChildCount(); i++) {
+            View v = all.getChildAt(i);
+            if ("section".equals(v.getTag())) { cur = new ArrayList<>(); secs.put(((TextView) v).getText().toString(), cur); }
+            else if (cur != null) cur.add(v);
+        }
+        for (List<View> vs : secs.values()) for (View v : vs) if (v.getParent() != null) ((ViewGroup) v.getParent()).removeView(v);
+        LinearLayout l = Ui.col(this);
+        int pad = Ui.dp(this, 16);
+        l.setPadding(pad, Ui.dp(this, 8), pad, pad * 2);
+        if (!secs.containsKey(settingsSec)) settingsSec = "";
+        if (!settingsSec.isEmpty()) {
+            Flow top = new Flow(this, 8);
+            top.addView(Kit.textButton(this, "‹ Settings", "Back to the list of settings", false, v -> { settingsSec = ""; show(); }));
+            Kit.add(l, top, 8);
+            TextView t = Ui.text(this, settingsSec.charAt(0) + settingsSec.substring(1).toLowerCase(Locale.ROOT), 22, Ui.TEXT);
+            t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            Kit.add(l, t, 8);
+            for (View v : secs.get(settingsSec)) l.addView(v);
+            return Ui.scroll(this, l);
+        }
+        // the PC at a glance, then one row per group
+        PcLink pc = app.pc();
+        long at = app.store().pulledAt();
+        Kit.add(l, Kit.actionCard(this, pc == null ? "Not linked to the PC" : "Linked to the PC",
+                pc == null ? "Open “The PC” to paste the link." : (at == 0 ? "Not synced yet" : "Last sync " + Ui.ago(at)),
+                pc == null ? "Link" : "Sync", v -> { if (pc == null) { settingsSec = "THE PC"; show(); } else sync(); }));
+
+        Map<String, String> hints = new java.util.HashMap<>();
+        hints.put("LOOK", Ui.themeName(app.prefs().getString("theme", "pc")));
+        hints.put("STORAGE", "");
+        LinearLayout g = Ui.group(this);
+        for (String name : secs.keySet()) {
+            final String key = name;
+            String nice = name.charAt(0) + name.substring(1).toLowerCase(Locale.ROOT);
+            Ui.pickRow(g, nice, hints.getOrDefault(name, ""), v -> { settingsSec = key; show(); });
+        }
         Ui.add(l, g, 0);
         return Ui.scroll(this, l);
     }

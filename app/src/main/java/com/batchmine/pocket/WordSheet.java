@@ -295,9 +295,7 @@ public final class WordSheet {
             r.word = res[0] == null ? word[0].toLowerCase() : res[0].lemma();
             if (res[0] != null) {
                 java.util.Set<Integer> only = picks.set;
-                for (int k = 0; k < res[0].hits.size(); k++) if (only.contains(k)) { r.glosses = res[0].hits.get(k).glosses; break; }
-                r.defHtml = Dictionaries.allMeanings(res[0], only);
-                r.richBy = Dictionaries.meaningsByLabel(res[0], only, Cards.dictLabels(lang));
+                fill(r, res[0], only, lang);
                 r.picked = new java.util.LinkedHashMap<>();                 // the single meanings ticked: the short definition
                 for (Object o : picks.defs) {
                     Map<String, Object> x = Json.obj(o);
@@ -307,8 +305,6 @@ public final class WordSheet {
                     if (lst == null) r.picked.put(l, lst = new java.util.ArrayList<>());
                     if (!lst.contains(t) && lst.size() < 12) lst.add(t);
                 }
-                if (res[0].freq > 0) r.freq = String.valueOf(res[0].freq);
-                r.ipa = res[0].ipa.isEmpty() ? "" : res[0].ipa.values().iterator().next();
             }
             d.dismiss();
             Cards.make(a, r, () -> { if (onChange != null) onChange.changed(); });
@@ -390,6 +386,19 @@ public final class WordSheet {
         wIn.setOnEditorActionListener((tv, id, ev) -> { lookup[0].run(); return false; });
         drawSen[0].run();
         lookup[0].run();
+    }
+
+    /** Puts what a dictionary lookup knows onto a card: the meanings of the dictionaries in ONLY (all when null), glosses, frequency, IPA.
+     *  Used by this sheet and by the quick word bars (Reader, later the Player) so a card looks the same wherever it is made. */
+    static void fill(Cards.Request r, Dictionaries.Result res, java.util.Set<Integer> only, String lang) {
+        if (res == null || !res.found()) return;
+        if (only == null) only = firstDictionary(res);
+        r.word = res.lemma();
+        for (int k = 0; k < res.hits.size(); k++) if (only.contains(k)) { r.glosses = res.hits.get(k).glosses; break; }
+        r.defHtml = Dictionaries.allMeanings(res, only);
+        r.richBy = Dictionaries.meaningsByLabel(res, only, Cards.dictLabels(lang));
+        if (res.freq > 0) r.freq = String.valueOf(res.freq);
+        r.ipa = res.ipa.isEmpty() ? "" : res.ipa.values().iterator().next();
     }
 
     /** The row of definition-language tabs ("All", "EN", "IT" …): a tap shows only the entries written in that language. */

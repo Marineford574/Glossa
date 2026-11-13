@@ -296,6 +296,7 @@ public final class Ui {
         t.setTypeface(Typeface.DEFAULT_BOLD);
         t.setLetterSpacing(0.08f);
         t.setPadding(dp(c, 4), dp(c, 18), 0, dp(c, 6));
+        t.setTag("section");                                    // MainActivity.settings() groups the page by these
         return t;
     }
 
