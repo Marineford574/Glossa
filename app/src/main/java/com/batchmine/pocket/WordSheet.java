@@ -80,7 +80,11 @@ public final class WordSheet {
         Dialog d = new Dialog(a, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar);
         d.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout box = Ui.col(a);
-        box.setBackground(Ui.round(Ui.BG, Ui.dp(a, 22)));
+        float rr = Ui.dp(a, 24);
+        android.graphics.drawable.GradientDrawable sheetBg = new android.graphics.drawable.GradientDrawable();
+        sheetBg.setColor(Ui.BG);
+        sheetBg.setCornerRadii(new float[]{rr, rr, rr, rr, 0, 0, 0, 0});          // rounded at the top only: it rises from the bottom edge
+        box.setBackground(sheetBg);
         int p = Ui.dp(a, 12);
         box.setPadding(p, p, p, p);
         final String[] word = {word0};
@@ -178,6 +182,10 @@ public final class WordSheet {
             @Override public void onTextChanged(CharSequence s, int x, int y, int z) { edited[0] = s.toString(); }
             @Override public void afterTextChanged(android.text.Editable e) { }
         });
+        // ---- one tab per language the definitions are written in (shown when there are two or more)
+        final LinearLayout langTabs = Ui.col(a);
+        langTabs.setPadding(0, Ui.dp(a, 8), 0, 0);
+        box.addView(langTabs);
         // ---- the dictionary entries, each with a tick box
         WebView web = null;
         TextView plain = null;
@@ -238,7 +246,7 @@ public final class WordSheet {
         Button known = Ui.button(a, "Add to known", null), save = Ui.button(a, "Save", null), card = Ui.primary(a, "Make card", null);
         btns.addView(Ui.weight(known, 1));
         btns.addView(Ui.weight(save, 1));
-        btns.addView(Ui.weight(card, 1.3f));
+        btns.addView(Ui.weight(card, 1.8f));
         box.addView(btns);
         d.setContentView(box);
         Window w = d.getWindow();
@@ -364,6 +372,14 @@ public final class WordSheet {
                     for (String ipa : r.ipa.values()) { meta.addView(chip(a, ipa)); break; }
                     if (r.freq > 0) meta.addView(chip(a, "#" + r.freq));
                     if (!r.found()) meta.addView(chip(a, "not in your dictionaries"));
+                    // the chips features add (level, gender …): Extras.factSource
+                    for (Extras.Fact f : Extras.facts(lang, r.found() ? r.lemma() : wd)) {
+                        TextView fc = Kit.fact(a, f.text, f.kind);
+                        LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                        flp.rightMargin = Ui.dp(a, 6);
+                        meta.addView(fc, flp);
+                    }
+                    drawLangTabs(a, langTabs, r, lang, webF);
                     if (webF != null) webF.loadDataWithBaseURL(null, html, "text/html", "utf-8", null);
                     else if (plainF != null) plainF.setText(android.text.Html.fromHtml(html.replaceAll("(?s)<style>.*?</style>", ""), android.text.Html.FROM_HTML_MODE_COMPACT));
                     refreshKnown.run();
@@ -374,6 +390,30 @@ public final class WordSheet {
         wIn.setOnEditorActionListener((tv, id, ev) -> { lookup[0].run(); return false; });
         drawSen[0].run();
         lookup[0].run();
+    }
+
+    /** The row of definition-language tabs ("All", "EN", "IT" …): a tap shows only the entries written in that language. */
+    private static void drawLangTabs(Activity a, LinearLayout holder, Dictionaries.Result r, String lang, WebView web) {
+        holder.removeAllViews();
+        java.util.List<String> ls = new java.util.ArrayList<>();
+        for (Dictionaries.Hit h : r.hits) { String g = glossLang(h.dict, lang); if (!ls.contains(g)) ls.add(g); }
+        if (ls.size() < 2 || web == null) return;
+        String[] names = new String[ls.size() + 1];
+        names[0] = "All";
+        for (int i = 0; i < ls.size(); i++) names[i + 1] = ls.get(i).toUpperCase(java.util.Locale.ROOT);
+        final Flow[] row = {null};
+        final int[] chosen = {0};
+        Runnable[] redraw = {null};
+        redraw[0] = () -> {
+            if (row[0] != null) holder.removeView(row[0]);
+            row[0] = Kit.chips(a, names, chosen[0], i -> {
+                chosen[0] = i;
+                web.evaluateJavascript("showLang(" + (i == 0 ? "''" : "'" + ls.get(i - 1).replace("'", "") + "'") + ")", null);
+                redraw[0].run();
+            });
+            holder.addView(row[0]);
+        };
+        redraw[0].run();
     }
 
     /** The entries of the first dictionary that has the word: ticked to begin with (the page ticks them the same way). */
@@ -417,6 +457,7 @@ public final class WordSheet {
           // game controller: the framed definition (D-pad up / down), A ticks it
           .append("function padDef(d){var xs=Array.prototype.slice.call(document.querySelectorAll('input.gpick'));if(!xs.length)return 0;var cur=document.querySelector('input.gpick.padcur'),i=cur?xs.indexOf(cur):-1;if(cur){cur.classList.remove('padcur');(cur.closest('li')||cur.parentNode).classList.remove('padrow')}i=i<0?(d>0?0:xs.length-1):Math.max(0,Math.min(xs.length-1,i+d));var x=xs[i];x.classList.add('padcur');var r=x.closest('li')||x.parentNode;r.classList.add('padrow');r.scrollIntoView({block:'nearest'});return xs.length}")
           .append("function padSel(){var c=document.querySelector('input.gpick.padcur');if(!c)return 'none';c.click();return 'ok'}")
+          .append("function showLang(l){document.querySelectorAll('.blk').forEach(function(b){b.style.display=(!l||b.getAttribute('data-l')===l)?'':'none'})}")
           .append("document.addEventListener('DOMContentLoaded',boxes)")
           .append("</script></head><body>");
         if (!r.found()) {
