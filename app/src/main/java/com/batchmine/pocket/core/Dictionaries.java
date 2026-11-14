@@ -4,6 +4,8 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -22,14 +24,20 @@ public final class Dictionaries {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Set<String>> e) { return size() > 20000; }
     });
 
+    private final Map<String, Boolean> jaCache = Collections.synchronizedMap(new LinkedHashMap<String, Boolean>(4096, .75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Boolean> e) { return size() > 60000; }
+    });
+
     public Dictionaries(File root) { this.root = root; root.mkdirs(); reload(); }
 
     public synchronized void reload() {
         for (Dict d : dicts) try { d.close(); } catch (IOException ignored) { }
         dicts.clear();
         lemmaCache.clear();
+        jaCache.clear();
+        readCache.clear();
         File[] kids = root.listFiles();
-        if (kids == null) return;
+        if (kids == null) { Ja.LISTED = null; return; }
         java.util.Arrays.sort(kids);
         for (File k : kids) {
             if (!k.isDirectory() || k.getName().startsWith(".")) {
@@ -39,6 +47,7 @@ public final class Dictionaries {
             if (!new File(k, "meta.json").isFile()) continue;
             try { dicts.add(new Dict(k)); } catch (IOException | RuntimeException ignored) { }
         }
+        Ja.LISTED = hasTerms("ja") ? this::listedJa : null;           // Japanese text is cut into words only when a Japanese dictionary is there
     }
 
     public synchronized List<Dict> list() { return new ArrayList<>(dicts); }
@@ -65,6 +74,7 @@ public final class Dictionaries {
     // ---------------------------------------------------------------- lookup
     public static final class Hit {
         public final String dict, term, pos, html, via;
+        public String reading = "";                       // Japanese: the reading of the headword
         public final List<String> glosses;
         Hit(String dict, String term, String pos, String html, List<String> glosses, String via) {
             this.dict = dict; this.term = term; this.pos = pos; this.html = html; this.glosses = glosses; this.via = via;
@@ -210,6 +220,12 @@ public final class Dictionaries {
                     }
                 }
             }
+            if (r.hits.isEmpty() && Ja.isJa(word)) {                       // Japanese: 食べた -> 食べる, by the suffix rules
+                for (String lemma : Ja.deinflect(word)) {
+                    for (Dict d : ds) if (d.terms != null) for (String s : d.terms.get(lemma)) addHit(r, d, s, word + " → " + lemma, seen);
+                    if (!r.hits.isEmpty()) break;
+                }
+            }
             Set<String> terms = new LinkedHashSet<>();
             for (Hit h : r.hits) terms.add(h.term);
             if (terms.isEmpty()) terms.addAll(variants(word));
@@ -235,7 +251,9 @@ public final class Dictionaries {
         Map<String, Object> m = Json.obj(Json.parse(json));
         List<String> gl = new ArrayList<>();
         for (Object g : Json.arr(m.get("g"))) gl.add(Json.str(g, ""));
-        r.hits.add(new Hit(d.title, Json.str(m.get("t"), ""), Json.str(m.get("p"), ""), Json.str(m.get("h"), ""), gl, via));
+        Hit h = new Hit(d.title, Json.str(m.get("t"), ""), Json.str(m.get("p"), ""), Json.str(m.get("h"), ""), gl, via);
+        h.reading = Json.str(m.get("r"), "");
+        r.hits.add(h);
     }
 
     /** The forms a word can stand for when colouring it: itself in lower case and its dictionary forms (no definitions read). */
@@ -254,6 +272,13 @@ public final class Dictionaries {
                         int i = f.indexOf('\u0001');
                         out.add((i < 0 ? f : f.substring(0, i)).toLowerCase());
                     }
+                }
+            }
+            if (Ja.isJa(word)) {
+                for (String lemma : Ja.deinflect(word)) {
+                    boolean head = false;
+                    for (Dict d : ds) if (d.terms != null && !d.terms.get(lemma).isEmpty()) { head = true; break; }
+                    if (head) out.add(lemma);
                 }
             }
             if (out.size() == 1) for (String v : withoutClitics(word, lang)) {
@@ -282,6 +307,84 @@ public final class Dictionaries {
                     if (!d.terms.get(cap).isEmpty()) return true;
                 }
             }
+        } catch (IOException ignored) { }
+        return false;
+    }
+
+    private final Map<String, String[]> readCache = Collections.synchronizedMap(new LinkedHashMap<String, String[]>(1024, .75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, String[]> e) { return size() > 20000; }
+    });
+    private static final String[] NONE = new String[0];
+
+    /** Japanese: {lemma, reading} of a word as it stands in the text (the first hit of a Japanese dictionary), or null (no reading known). */
+    public String[] readingOf(String surface) {
+        String[] c = readCache.get(surface);
+        if (c != null) return c.length == 0 ? null : c;
+        String[] found = null;
+        List<String> tries = new ArrayList<>();
+        tries.add(surface);
+        tries.addAll(Ja.deinflect(surface));
+        try {
+            outer:
+            for (String t : tries) {
+                for (Dict d : forLang("ja")) {
+                    if (d.terms == null) continue;
+                    for (String js : d.terms.get(t)) {
+                        Map<String, Object> m = Json.obj(Json.parse(js));
+                        String rd = Json.str(m.get("r"), "");
+                        if (!rd.isEmpty()) { found = new String[]{t, rd}; break outer; }
+                    }
+                }
+            }
+        } catch (IOException ignored) { }
+        readCache.put(surface, found == null ? NONE : found);
+        return found;
+    }
+
+    /** Japanese: the commonest kanji (of the 2500) that the KNOWN words use at most WEAK times, commonest first, at most LIMIT of them:
+     *  [{c, on, kun, m, grade, jlpt, freq, strokes, known (words using it), ex (up to 5 of those words)}]. Needs a KANJIDIC dictionary. */
+    public List<Map<String, Object>> weakKanji(Set<String> knownWords, int weak, int limit) {
+        Map<String, Integer> count = new HashMap<>();
+        Map<String, List<String>> examples = new HashMap<>();
+        for (String kw : knownWords) {
+            int br = kw.indexOf('【');
+            String w = br > 0 ? kw.substring(0, br) : kw;
+            Set<Character> seen = new HashSet<>();
+            for (int i = 0; i < w.length(); i++) if (Ja.isHan(w.charAt(i)) && seen.add(w.charAt(i))) {
+                String c = String.valueOf(w.charAt(i));
+                count.merge(c, 1, Integer::sum);
+                List<String> ex = examples.computeIfAbsent(c, x -> new ArrayList<>());
+                if (ex.size() < 5 && !ex.contains(w)) ex.add(w);
+            }
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Dict d : forLang("ja")) for (Map<String, Object> k : d.kanjiRows()) {
+            String fr = Json.str(k.get("freq"), "");
+            int f = fr.matches("\\d+") ? Integer.parseInt(fr) : 99999;
+            int used = count.getOrDefault(Json.str(k.get("c"), ""), 0);
+            if (f > 2500 || used > weak) continue;
+            k.put("known", used);
+            k.put("ex", examples.getOrDefault(Json.str(k.get("c"), ""), new ArrayList<String>()));
+            rows.add(k);
+        }
+        rows.sort((a, b) -> Integer.compare(Integer.parseInt(Json.str(a.get("freq"), "99999")), Integer.parseInt(Json.str(b.get("freq"), "99999"))));
+        return rows.size() > limit ? new ArrayList<>(rows.subList(0, limit)) : rows;
+    }
+
+    /** Japanese: is the string a headword, or an inflected form of one, in a Japanese dictionary? (what cuts the text into words) */
+    public boolean listedJa(String s) {
+        Boolean c = jaCache.get(s);
+        if (c != null) return c;
+        boolean r = listedJa0(s);
+        jaCache.put(s, r);
+        return r;
+    }
+
+    private boolean listedJa0(String s) {
+        List<Dict> ds = forLang("ja");
+        try {
+            for (Dict d : ds) if (d.terms != null && !d.terms.get(s).isEmpty()) return true;
+            if (s.length() > 1) for (String lemma : Ja.deinflect(s)) for (Dict d : ds) if (d.terms != null && !d.terms.get(lemma).isEmpty()) return true;
         } catch (IOException ignored) { }
         return false;
     }

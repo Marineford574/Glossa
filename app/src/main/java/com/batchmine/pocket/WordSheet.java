@@ -403,6 +403,11 @@ public final class WordSheet {
                     picks.defs = new java.util.ArrayList<>();
                     meta.removeAllViews();
                     if (r.found() && !r.lemma().equalsIgnoreCase(wd)) meta.addView(chip(a, "→ " + r.lemma()));
+                    if (r.found()) {                                                 // Japanese: the readings of the hits (はし・きょう)
+                        java.util.LinkedHashSet<String> rds = new java.util.LinkedHashSet<>();
+                        for (com.batchmine.pocket.core.Dictionaries.Hit h0 : r.hits) if (!h0.reading.isEmpty() && rds.size() < 3) rds.add(h0.reading);
+                        if (!rds.isEmpty()) meta.addView(chip(a, String.join("・", rds)));
+                    }      // Japanese: the reading
                     for (String ipa : r.ipa.values()) { meta.addView(chip(a, ipa)); break; }
                     if (r.freq > 0) meta.addView(chip(a, "#" + r.freq));
                     if (!r.found()) meta.addView(chip(a, "not in your dictionaries"));

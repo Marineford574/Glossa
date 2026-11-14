@@ -83,6 +83,7 @@ public final class Book {
         b.title = title;
         Chapter cur = new Chapter(title);
         String norm = text.replace("\uFEFF", "").replace("\r\n", "\n").replace('\r', '\n');
+        if (Ja.looksAozora(norm)) norm = Ja.aozora(norm);                // an Aozora Bunko file: no ruby marks, notes or colophon
         boolean blankLines = norm.contains("\n\n");
         String[] blocks = blankLines ? norm.split("\\n\\s*\\n") : norm.split("\\n");
         for (String bl : blocks) {
@@ -105,7 +106,12 @@ public final class Book {
 
     public static String decode(byte[] raw) {
         String s = new String(raw, StandardCharsets.UTF_8);
-        if (s.indexOf('\uFFFD') >= 0) s = new String(raw, Charset.forName("windows-1252"));
+        if (s.indexOf('\uFFFD') >= 0) {
+            String sj = new String(raw, Charset.forName("windows-31j"));                       // Aozora Bunko and many Japanese .txt files are Shift-JIS
+            int jp = 0, other = 0;
+            for (int i = 0; i < sj.length(); i++) { char ch = sj.charAt(i); if (ch >= 0x2000) jp++; else if (ch > 127) other++; }       // jp: kana, kanji, full-width and CJK marks; other: Latin letters with accents
+            s = jp >= 5 && other * 10 <= jp && sj.indexOf('\uFFFD') < 0 ? sj : new String(raw, Charset.forName("windows-1252"));
+        }
         return s;
     }
 

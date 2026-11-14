@@ -26,12 +26,15 @@ public final class SubSearch {
         public String name = ""; public int season = -1, episode = -1;
     }
 
-    public static byte[] get(String url, int limit) throws IOException {
+    public static byte[] get(String url, int limit) throws IOException { return get(url, limit, null); }
+
+    public static byte[] get(String url, int limit, String auth) throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(15000);
         c.setReadTimeout(30000);
         c.setRequestProperty("User-Agent", UA);
         c.setRequestProperty("Accept", "application/json, */*");
+        if (auth != null && !auth.isEmpty()) c.setRequestProperty("Authorization", auth);
         try {
             int code = c.getResponseCode();
             if (code >= 400) throw new IOException(new URL(url).getHost() + " answered " + code + (code == 401 || code == 403 ? " (is the key right?)" : ""));
@@ -48,7 +51,54 @@ public final class SubSearch {
     private static String enc(String s) { try { return URLEncoder.encode(s, "UTF-8"); } catch (java.io.UnsupportedEncodingException e) { return s; } }
 
     /** The results of both sources (one failing does not hide the other); NOTES gets what went wrong. */
-    public static List<Map<String, Object>> search(Query q, String lang, String subdlKey, List<String> notes) {
+    public static String jimaku = "https://jimaku.cc/api", jimakuKey = "";     // changed by tests; the key is the one of your jimaku.cc account
+
+    public static List<Map<String, Object>> search(Query q, String lang, String subdlKey, String jimakuKey, List<String> notes) {
+        SubSearch.jimakuKey = jimakuKey == null ? "" : jimakuKey.trim();
+        List<Map<String, Object>> all = new ArrayList<>();
+        if (lang.equalsIgnoreCase("ja") && !SubSearch.jimakuKey.isEmpty()) {
+            try { all.addAll(jimaku(q, SubSearch.jimakuKey)); } catch (IOException | RuntimeException e) { notes.add("Jimaku: " + e.getMessage()); }
+        } else if (lang.equalsIgnoreCase("ja")) notes.add("Jimaku: add the API key of your jimaku.cc account in Settings for Japanese subtitles");
+        all.addAll(search(q, lang, subdlKey, notes, true));
+        all.sort((a, b) -> Integer.compare(rank(a, q), rank(b, q)));
+        return all.size() > 40 ? new ArrayList<>(all.subList(0, 40)) : all;
+    }
+
+    /** Jimaku (jimaku.cc): the entry of that name, its files (the episode asked for first). */
+    static List<Map<String, Object>> jimaku(Query q, String key) throws IOException {
+        List<Map<String, Object>> out = new ArrayList<>();
+        List<Object> ents = Json.arr(Json.parse(new String(get(jimaku + "/entries/search?anime=true&query=" + enc(q.name), 2_000_000, key), java.nio.charset.StandardCharsets.UTF_8)));
+        if (ents.isEmpty()) throw new IOException("no entry of that name (titles there are in romaji or Japanese)");
+        for (int i = 0; i < Math.min(3, ents.size()); i++) {
+            Map<String, Object> en = Json.obj(ents.get(i));
+            Object id = en.get("id");
+            if (!(id instanceof Number)) continue;
+            List<Object> files = Json.arr(Json.parse(new String(get(jimaku + "/entries/" + ((Number) id).longValue() + "/files" + (q.episode >= 0 ? "?episode=" + q.episode : ""), 2_000_000, key),
+                    java.nio.charset.StandardCharsets.UTF_8)));
+            for (Object o : files) {
+                Map<String, Object> f = Json.obj(o);
+                String name = Json.str(f.get("name"), ""), low = name.toLowerCase(Locale.ROOT), url = Json.str(f.get("url"), "");
+                if (!(low.endsWith(".srt") || low.endsWith(".ass") || low.endsWith(".vtt") || low.endsWith(".zip")) || !url.startsWith("https://")) continue;
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("source", "Jimaku");
+                r.put("name", Json.str(en.get("name"), "") + " / " + name);
+                Matcher m = Pattern.compile("[Ss]0*(\\d+)[Ee]0*(\\d+)|[ ._-]0*(\\d{1,3})(?:v\\d)?[ ._\\[(-]").matcher(name);
+                if (m.find()) {
+                    if (m.group(1) != null) { r.put("season", Integer.parseInt(m.group(1))); r.put("episode", Integer.parseInt(m.group(2))); }
+                    else r.put("episode", Integer.parseInt(m.group(3)));
+                }
+                r.put("full_season", !r.containsKey("episode"));
+                r.put("hi", false);
+                r.put("url", url);
+                out.add(r);
+            }
+        }
+        return out;
+    }
+
+    public static List<Map<String, Object>> search(Query q, String lang, String subdlKey, List<String> notes) { return search(q, lang, subdlKey, notes, false); }
+
+    private static List<Map<String, Object>> search(Query q, String lang, String subdlKey, List<String> notes, boolean quiet) {
         List<Map<String, Object>> all = new ArrayList<>();
         try { all.addAll(podnapisi(q, lang)); } catch (IOException | RuntimeException e) { notes.add("Podnapisi: " + e.getMessage()); }
         if (subdlKey == null || subdlKey.trim().isEmpty()) notes.add("SubDL: add its free key in Settings for more results");
@@ -117,7 +167,7 @@ public final class SubSearch {
     /** The subtitle text of one result (a zip is opened and the right episode picked); EXT[0] gets the extension. */
     public static String fetch(String url, String lang, int season, int episode, String[] ext) throws IOException {
         if (!url.startsWith("https://") && !url.startsWith("http://127.0.0.1")) throw new IOException("not a download address");
-        byte[] data = get(url, MAX);
+        byte[] data = get(url, MAX, url.startsWith(jimaku.substring(0, jimaku.indexOf("/api"))) ? jimakuKey : null);
         byte[] raw = data;
         ext[0] = ".srt";
         if (data.length > 2 && data[0] == 'P' && data[1] == 'K') {

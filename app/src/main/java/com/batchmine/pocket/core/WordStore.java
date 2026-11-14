@@ -91,6 +91,14 @@ public final class WordStore {
     }
 
     // ---------------------------------------------------------------- colour
+    /** Every word counted as known (from the PC and marked here). */
+    public synchronized Set<String> knownWords() {
+        Set<String> out = new HashSet<>(known);
+        out.addAll(knownAdd);
+        out.removeAll(knownDel);
+        return out;
+    }
+
     public synchronized boolean isKnown(String w) { return (known.contains(w) || knownAdd.contains(w)) && !knownDel.contains(w); }
 
     /**
@@ -219,7 +227,11 @@ public final class WordStore {
      */
     public synchronized void pulled(Map<String, Object> pc) {
         known.clear();
-        for (Object w : Json.arr(pc.get("known"))) known.add(Json.str(w, "").toLowerCase());
+        for (Object w : Json.arr(pc.get("known"))) {
+            String k = Json.str(w, "").toLowerCase();
+            int br = k.indexOf('【');                                   // Japanese heteronyms come as 生物【せいぶつ】: the phone knows the word by its spelling
+            known.add(br > 0 ? k.substring(0, br) : k);
+        }
         cards.clear();
         for (Map.Entry<String, Object> e : Json.obj(pc.get("cards")).entrySet()) cards.put(e.getKey().toLowerCase(), Json.str(e.getValue(), "card"));
         Map<String, Integer> ns = new HashMap<>();

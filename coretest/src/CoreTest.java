@@ -115,7 +115,7 @@ public class CoreTest {
         check("shift and write .srt", srt.startsWith("1\n00:00:01,500 --> 00:00:03,500\nCiao amico mio\n\n2\n") && Subs.parse(srt).size() == 2, srt);
       }
       check("dictionary language from its title", "it".equals(Dict.langOfTitle("Leipzig Italian Mixed-Typical")) && "de".equals(Dict.langOfTitle("Leipzig German Mixed-Typical"))
-          && "it".equals(Dict.langOfTitle("wty-it-de")) && "".equals(Dict.langOfTitle("JMdict")) && "hr".equals(Dict.langOfTitle("Hrvatski rječnik")), "");
+          && "it".equals(Dict.langOfTitle("wty-it-de")) && "ja".equals(Dict.langOfTitle("JMdict")) && "hr".equals(Dict.langOfTitle("Hrvatski rječnik")), "");
       Map<String, Object> bk = new java.util.LinkedHashMap<>();
       check("meta: the book's own details fill empty fields only", Meta.fromEpub(bk, m, 1) && !Meta.fromEpub(bk, m, 2) && bk.get("creator") != null, bk.toString());
     }
@@ -181,6 +181,77 @@ public class CoreTest {
       check("dict.cc: folded block with tick boxes", h.contains("<details class=dcc>") && h.contains("data-t='to approach'") && !h.contains("<details class=dcc open"), h);
       check("dict.cc: a word that is not there gives nothing", DictCc.lookup(java.util.Arrays.asList(dt), java.util.Arrays.asList("nichtda")).isEmpty() && DictCc.html(new java.util.ArrayList<DictCc.Found>(), false, "").isEmpty(), "");
       tf.delete();
+    }
+    {
+      java.util.function.Function<List<String[]>, String> fmt = l -> { StringBuilder q = new StringBuilder(); for (String[] x : l) q.append(x[0]).append(x[1].isEmpty() ? "" : "[" + x[1] + "]").append(" "); return q.toString().trim(); };
+      check("ja furigana: okurigana", fmt.apply(Ja.furiganaPairs("食べる", "たべる")).equals("食[た] べる") && fmt.apply(Ja.furiganaPairs("引き出す", "ひきだす")).equals("引[ひ] き 出[だ] す")
+          && fmt.apply(Ja.furiganaPairs("日本語", "にほんご")).equals("日本語[にほんご]") && fmt.apply(Ja.furiganaPairs("お母さん", "おかあさん")).equals("お 母[かあ] さん"), fmt.apply(Ja.furiganaPairs("お母さん", "おかあさん")));
+      java.util.function.Function<List<String[]>, String> rf = l -> { StringBuilder q = new StringBuilder(); for (String[] x : l) q.append(x[0]).append("-").append(x[1]).append(":").append(x[2]).append(" "); return q.toString().trim(); };
+      check("ja furigana: an inflected form keeps the ruby of the stem only", rf.apply(Ja.rubyFor("食べた", "食べる", "たべる")).equals("0-1:た") && rf.apply(Ja.rubyFor("書かれなかった", "書く", "かく")).equals("0-1:か")
+          && rf.apply(Ja.rubyFor("勉強", "勉強", "べんきょう")).equals("0-2:べんきょう") && Ja.rubyFor("きた", "来る", "くる").isEmpty(), rf.apply(Ja.rubyFor("書かれなかった", "書く", "かく")));
+    }
+    {
+      File kr = new File(d + "kroot"); Dict.deleteTree(kr); kr.mkdirs();
+      ByteArrayOutputStream kb = new ByteArrayOutputStream();
+      try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(kb)) {
+        String[][] files = {{"index.json", "{\"title\":\"KANJIDIC (English)\",\"format\":3,\"revision\":\"t\"}"},
+          {"kanji_bank_1.json", "[[\"食\",\"ショク\",\"た.べる\",\"\",[\"eat\",\"food\"],{\"grade\":\"2\",\"jlpt\":\"4\",\"freq\":\"328\",\"strokes\":\"9\"}],"
+            + "[\"橋\",\"キョウ\",\"はし\",\"\",[\"bridge\"],{\"grade\":\"3\",\"jlpt\":\"3\",\"freq\":\"900\",\"strokes\":\"16\"}],"
+            + "[\"校\",\"コウ\",\"\",\"\",[\"school\"],{\"grade\":\"1\",\"jlpt\":\"4\",\"freq\":\"100\",\"strokes\":\"10\"}],"
+            + "[\"鬱\",\"ウツ\",\"\",\"\",[\"depression\"],{\"grade\":\"\",\"jlpt\":\"\",\"freq\":\"2900\",\"strokes\":\"29\"}]]"}};
+        for (String[] f : files) { z.putNextEntry(new java.util.zip.ZipEntry(f[0])); z.write(f[1].getBytes("UTF-8")); z.closeEntry(); }
+      }
+      Dict.importZip(new ByteArrayInputStream(kb.toByteArray()), kr, null);
+      Dictionaries kd = new Dictionaries(kr);
+      Set<String> kn = new HashSet<>(Arrays.asList("食べる【たべる】", "食事", "食堂", "食べ物", "学校", "校長", "校庭", "校門", "校舎"));
+      List<Map<String, Object>> wk = kd.weakKanji(kn, 2, 10);
+      StringBuilder wks = new StringBuilder(); for (Map<String, Object> m : wk) wks.append(m.get("c")).append(m.get("known")).append(m.get("ex")).append(' ');
+      check("ja kanji: KANJIDIC import, weak kanji = common, used by few known words (食 is used by 4, 校 by 5, 鬱 is rare)", wk.size() == 1 && "橋".equals(wk.get(0).get("c")) && "bridge".equals(((List<?>) wk.get(0).get("m")).get(0)), wks);
+      List<Map<String, Object>> wk5 = kd.weakKanji(kn, 4, 10);
+      check("ja kanji: raising the limit adds 食 (4 known words use it) in frequency order", wk5.size() == 2 && "食".equals(wk5.get(0).get("c")) && ((List<?>) wk5.get(0).get("ex")).contains("食べる"), wk5.size());
+    }
+    // Japanese: dictionary import (reading, pitch), deinflection, cutting into words, Aozora, Jimaku
+    {
+      File jr = new File(d + "jaroot"); Dict.deleteTree(jr); jr.mkdirs();
+      ByteArrayOutputStream zb = new ByteArrayOutputStream();
+      try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(zb)) {
+        String[][] files = {
+          {"index.json", "{\"title\":\"JMdict (English)\",\"format\":3,\"revision\":\"t\"}"},
+          {"term_bank_1.json", "[[\"食べる\",\"たべる\",\"v1\",\"\",0,[\"to eat\"],1,\"\"],[\"私\",\"わたし\",\"pn\",\"\",0,[\"I\"],2,\"\"],[\"は\",\"は\",\"prt\",\"\",0,[\"topic marker\"],3,\"\"],"
+            + "[\"学校\",\"がっこう\",\"n\",\"\",0,[\"school\"],4,\"\"],[\"行く\",\"いく\",\"v5k-s\",\"\",0,[\"to go\"],5,\"\"],[\"に\",\"に\",\"prt\",\"\",0,[\"to\"],6,\"\"],[\"橋\",\"はし\",\"n\",\"\",0,[\"bridge\"],7,\"\"]]"},
+          {"term_meta_bank_1.json", "[[\"食べる\",\"pitch\",{\"reading\":\"たべる\",\"pitches\":[{\"position\":2}]}],[\"橋\",\"freq\",{\"reading\":\"はし\",\"frequency\":{\"value\":5,\"displayValue\":\"N5\"}}]]"}};
+        for (String[] f : files) { z.putNextEntry(new java.util.zip.ZipEntry(f[0])); z.write(f[1].getBytes("UTF-8")); z.closeEntry(); }
+      }
+      Dict.importZip(new ByteArrayInputStream(zb.toByteArray()), jr, null);
+      Dictionaries jd = new Dictionaries(jr);
+      Dictionaries.Result jres = jd.lookup("食べた", "ja");
+      check("ja: a dictionary titled JMdict is Japanese", jd.hasTerms("ja") && Ja.LISTED != null, "");
+      check("ja: 食べた finds 食べる with its reading and pitch", jres.found() && jres.lemma().equals("食べる") && jres.hits.get(0).reading.equals("たべる") && jres.ipa.values().contains("たべる [2]"), jres.hits.size() + " " + jres.ipa);
+      check("ja: a JLPT level is not taken for a frequency rank", jd.lookup("橋", "ja").freq < 0, jd.lookup("橋", "ja").freq);
+      String jt = "私は学校に行った。";
+      StringBuilder js = new StringBuilder(); for (int[] x : Subs.words(jt)) js.append(jt, x[0], x[1]).append('|');
+      check("ja: text without spaces is cut by the dictionary", js.toString().equals("私|は|学校|に|行った|"), js);
+      check("ja: the known-word forms of 食べた include 食べる", jd.candidates("食べた", "ja").contains("食べる"), jd.candidates("食べた", "ja"));
+      check("ja: deinflection table", Ja.deinflect("書かれなかった").contains("書く") && Ja.deinflect("美味しくない").contains("美味しい") && Ja.deinflect("勉強します").contains("勉強する")
+          && Ja.deinflect("行って").contains("行く") && Ja.deinflect("きた").contains("くる"), Ja.deinflect("書かれなかった"));
+      String az = "羅生門\r\n芥川\r\n\r\n" + "-".repeat(55) + "\r\n【記号】\r\n" + "-".repeat(55) + "\r\n\r\n　ある日、下人《げにん》が［＃傍点］待っていた。\r\n\r\n底本：全集\r\n";
+      Book ab = Book.fromText(Book.decode(az.getBytes("windows-31j")), "x");
+      check("ja: an Aozora Bunko .txt (Shift-JIS) loses ruby, notes and colophon", ab.paraCount() >= 2 && ab.chapters.get(0).paras.contains("ある日、下人が待っていた。") && !ab.chapters.get(0).paras.toString().contains("底本"), ab.chapters.get(0).paras);
+      com.sun.net.httpserver.HttpServer hs = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+      final String[] auth = {null};
+      hs.createContext("/", ex -> {
+        String p = ex.getRequestURI().toString(); auth[0] = ex.getRequestHeaders().getFirst("Authorization");
+        String body = p.startsWith("/api/entries/search") ? "[{\"id\":7,\"name\":\"Shingeki no Kyojin\"}]"
+            : p.startsWith("/api/entries/7/files") ? "[{\"name\":\"SNK - 05.srt\",\"url\":\"https://x/y\"},{\"name\":\"a.txt\",\"url\":\"https://x/z\"}]" : "{}";
+        byte[] bb = body.getBytes("UTF-8"); ex.sendResponseHeaders(200, bb.length); ex.getResponseBody().write(bb); ex.close(); });
+      hs.start();
+      SubSearch.jimaku = "http://127.0.0.1:" + hs.getAddress().getPort() + "/api";
+      SubSearch.Query jq = new SubSearch.Query(); jq.name = "Shingeki no Kyojin"; jq.season = 1; jq.episode = 5;
+      List<String> jn = new ArrayList<>();
+      List<Map<String, Object>> jf = SubSearch.search(jq, "ja", "", "KEY123", jn);
+      hs.stop(0);
+      boolean jim = false; for (Map<String, Object> m : jf) if ("Jimaku".equals(m.get("source")) && String.valueOf(m.get("name")).endsWith("SNK - 05.srt") && Integer.valueOf(5).equals(m.get("episode"))) jim = true;
+      check("ja: Jimaku search sends the key and lists the episode's files", jim && "KEY123".equals(auth[0]), jf + " " + auth[0] + " " + jn);
     }
     System.out.println(fails == 0 ? "all passed" : fails + " FAILED");
     System.exit(fails == 0 ? 0 : 1);

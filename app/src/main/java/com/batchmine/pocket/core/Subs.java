@@ -147,6 +147,8 @@ public final class Subs {
 
     /** The words of TEXT as [start, end) pairs. */
     public static List<int[]> words(String text) {
+        java.util.function.Predicate<String> ja = Ja.LISTED;
+        if (ja != null && Ja.isJa(text)) return Ja.segment(text, ja);        // Japanese has no spaces: cut by the dictionary
         List<int[]> out = new ArrayList<>();
         Matcher m = WORD.matcher(text);
         while (m.find()) out.add(new int[]{m.start(), m.end()});

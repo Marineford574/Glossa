@@ -40,6 +40,17 @@ public final class Dict implements Closeable {
         freq = Table.exists(dir, "freq") ? new Table(dir, "freq") : null;
     }
 
+    /** The kanji of a KANJIDIC dictionary: [{c, on, kun, m:[meanings], grade, jlpt, freq, strokes}], empty when this one has none. */
+    public List<Map<String, Object>> kanjiRows() {
+        File f = new File(dir, "kanji.json");
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (!f.isFile()) return out;
+        try {
+            for (Object o : Json.arr(Json.parse(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)))) out.add(Json.obj(o));
+        } catch (IOException | RuntimeException ignored) { }
+        return out;
+    }
+
     public String styles() {
         try { return new String(Files.readAllBytes(new File(dir, "styles.css").toPath()), StandardCharsets.UTF_8); }
         catch (IOException e) { return ""; }
@@ -71,6 +82,7 @@ public final class Dict implements Closeable {
              Table.Builder ib = new Table.Builder(tmp, "ipa"); Table.Builder qb = new Table.Builder(tmp, "freq")) {
             ZipEntry e;
             int n = 0;
+            List<Object> kanjiRows = new ArrayList<>();
             while ((e = zin.getNextEntry()) != null) {
                 String name = e.getName().replace('\\', '/');
                 name = name.substring(name.lastIndexOf('/') + 1);
@@ -86,6 +98,22 @@ public final class Dict implements Closeable {
                         addTerm(Json.arr(j.readValue()), tb, fb);
                         if (++n % 5000 == 0 && prog != null) prog.step(name, n);
                     }
+                } else if (name.startsWith("kanji_bank_") && name.endsWith(".json")) {                 // KANJIDIC: [char, on, kun, tags, meanings, {grade, jlpt, freq, strokes}]
+                    Json j = new Json(new BufferedReader(new InputStreamReader(keep, StandardCharsets.UTF_8), 1 << 16));
+                    j.beginArray();
+                    while (j.hasNext()) {
+                        List<Object> row = Json.arr(j.readValue());
+                        if (row.isEmpty() || Json.str(row.get(0), "").isEmpty()) continue;
+                        Map<String, Object> st = row.size() > 5 ? Json.obj(row.get(5)) : new LinkedHashMap<String, Object>();
+                        Map<String, Object> k = new LinkedHashMap<>();
+                        k.put("c", Json.str(row.get(0), ""));
+                        k.put("on", Json.str(row.size() > 1 ? row.get(1) : null, ""));
+                        k.put("kun", Json.str(row.size() > 2 ? row.get(2) : null, ""));
+                        List<Object> ms = row.size() > 4 ? Json.arr(row.get(4)) : new ArrayList<Object>();
+                        k.put("m", new ArrayList<Object>(ms.subList(0, Math.min(3, ms.size()))));
+                        for (String f : new String[]{"grade", "jlpt", "freq", "strokes"}) k.put(f, Json.str(st.get(f), ""));
+                        kanjiRows.add(k);
+                    }
                 } else if (name.startsWith("term_meta_bank_") && name.endsWith(".json")) {
                     Json j = new Json(new BufferedReader(new InputStreamReader(keep, StandardCharsets.UTF_8), 1 << 16));
                     j.beginArray();
@@ -94,9 +122,11 @@ public final class Dict implements Closeable {
                         if (++n % 5000 == 0 && prog != null) prog.step(name, n);
                     }
                 }
-                zin.closeEntry();
+                try { zin.closeEntry(); }
+                catch (java.util.zip.ZipException bad) { if (!String.valueOf(bad.getMessage()).contains("CRC")) throw bad; }      // a damaged checksum: the entry was read, go on
             }
             if (index == null) throw new IOException("this zip is not a Yomitan dictionary (it has no index.json)");
+            if (!kanjiRows.isEmpty()) Files.write(new File(tmp, "kanji.json").toPath(), Json.write(kanjiRows).getBytes(StandardCharsets.UTF_8));
             if (prog != null) prog.step("sorting", n);
             for (Table.Builder b : new Table.Builder[]{tb, fb, ib, qb}) if (b.count() > 0) b.finish();
         } catch (IOException | RuntimeException err) {
@@ -121,11 +151,12 @@ public final class Dict implements Closeable {
         {"it", "italian", "italiano"}, {"de", "german", "deutsch"}, {"hr", "croatian", "hrvatski"}, {"en", "english"}, {"fr", "french", "français", "francais"},
         {"es", "spanish", "español", "espanol"}, {"pt", "portuguese", "português", "portugues"}, {"nl", "dutch", "nederlands"}, {"ru", "russian"},
         {"pl", "polish", "polski"}, {"sr", "serbian"}, {"bs", "bosnian"}, {"sl", "slovenian", "slovene"}, {"cs", "czech"}, {"sv", "swedish"},
-        {"ja", "japanese"}, {"zh", "chinese"}, {"ko", "korean"}, {"la", "latin"}, {"el", "greek"}};
+        {"ja", "japanese", "jmdict", "jitendex", "jmnedict", "nhk", "日本語"}, {"zh", "chinese"}, {"ko", "korean"}, {"la", "latin"}, {"el", "greek"}};
 
     /** The language a dictionary's title names: "Leipzig Italian Mixed-Typical" → it, "wty-de-en" → de (its first code); "" when it names none. */
     public static String langOfTitle(String title) {
         String t = title == null ? "" : title.toLowerCase(java.util.Locale.ROOT);
+        if (t.matches(".*(jmdict|jitendex|jmnedict|kanjidic|nhk).*") ) return "ja";          // "JMdict (English)" is Japanese, not English
         java.util.regex.Matcher w = java.util.regex.Pattern.compile("^(?:wty|kty)[-_]([a-z]{2,3})[-_]").matcher(t);
         if (w.find()) return w.group(1);
         for (String[] l : LANG_NAMES)
@@ -166,6 +197,8 @@ public final class Dict implements Closeable {
         Map<String, Object> v = new LinkedHashMap<>();
         v.put("t", term);
         v.put("p", pos);
+        String rd = Json.str(e.get(1), "").trim();
+        if (!rd.isEmpty() && !rd.equals(term)) v.put("r", rd);            // Japanese: the reading of the headword
         v.put("h", html.toString());
         v.put("g", glosses);
         terms.add(term, Json.write(v));
@@ -183,12 +216,25 @@ public final class Dict implements Closeable {
                 if (!s.isEmpty() && !out.contains(s)) out.add(s);
             }
             if (!out.isEmpty()) ipa.add(term, String.join("  ", out));
+        } else if (kind.equals("pitch")) {                                        // NHK etc.: {reading, pitches:[{position}]} -> "はし [2]"
+            Map<String, Object> pm = Json.obj(e.get(2));
+            String rd = Json.str(pm.get("reading"), "");
+            List<String> ns = new ArrayList<>();
+            for (Object p : Json.arr(pm.get("pitches"))) {
+                Object pos = Json.obj(p).get("position");
+                if (pos instanceof Number) { String s = String.valueOf(((Number) pos).intValue()); if (!ns.contains(s)) ns.add(s); }
+            }
+            if (!ns.isEmpty()) ipa.add(term, (rd.isEmpty() ? "" : rd + " ") + "[" + String.join(",", ns) + "]");
         } else if (kind.equals("freq")) {
             Object f = e.get(2);
             if (f instanceof Map) {
                 Map<String, Object> fm = Json.obj(f);
                 f = fm.containsKey("frequency") ? fm.get("frequency") : fm.get("value");
-                if (f instanceof Map) f = Json.obj(f).get("value");
+                if (f instanceof Map) {
+                    Map<String, Object> inner = Json.obj(f);
+                    if (Json.str(inner.get("displayValue"), "").matches("N[1-5]")) return;       // a JLPT list is a level, not a frequency rank
+                    f = inner.get("value");
+                }
             }
             if (f instanceof Number) freq.add(term, String.valueOf(((Number) f).longValue()));
         }

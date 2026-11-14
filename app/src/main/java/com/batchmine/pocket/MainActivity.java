@@ -199,6 +199,41 @@ public final class MainActivity extends Activity {
         });
     }
 
+    /** Cards for the commonest of the 2500 kanji that the known words use at most twice (needs the KANJIDIC zip imported). */
+    private void weakKanjiDialog() {
+        android.widget.EditText nx = Ui.input(this, "20", "How many kanji");
+        nx.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        Ui.dialog(this).setTitle("Cards for the weak kanji")
+                .setMessage("The commonest of the 2500 kanji that your known words use at most twice. Needs the KANJIDIC dictionary (zip) imported in Settings. The cards use the Japanese card settings (AnkiDroid or the tray): the kanji is the word, its meanings the definition, known words that use it the sentence.")
+                .setView(nx).setPositiveButton("Make cards", (d, w) -> {
+                    int n;
+                    try { n = Math.max(1, Math.min(200, Integer.parseInt(nx.getText().toString().trim()))); } catch (NumberFormatException e) { n = 20; }
+                    final int count = n;
+                    new Thread(() -> {
+                        List<Map<String, Object>> rows = app.dicts.weakKanji(app.store("ja").knownWords(), 2, count);
+                        runOnUiThread(() -> {
+                            if (rows.isEmpty()) { Ui.toast(this, "No weak kanji found: import the KANJIDIC zip first (Settings → Dictionaries)"); return; }
+                            Ui.toast(this, rows.size() + " kanji cards…");
+                            makeKanjiCards(rows, 0);
+                        });
+                    }).start();
+                }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void makeKanjiCards(List<Map<String, Object>> rows, int i) {
+        if (i >= rows.size()) { Ui.toast(this, "Kanji cards made"); return; }
+        Map<String, Object> k = rows.get(i);
+        Cards.Request r = new Cards.Request();
+        r.lang = "ja"; r.kind = "text";
+        r.word = Json.str(k.get("c"), ""); r.surface = r.word;
+        StringBuilder ex = new StringBuilder();
+        for (Object o : Json.arr(k.get("ex"))) ex.append(ex.length() > 0 ? "　" : "").append(Json.str(o, ""));
+        r.sentence = ex.length() > 0 ? ex.toString() : r.word;
+        for (Object o : Json.arr(k.get("m"))) r.glosses.add(Json.str(o, ""));
+        r.ipa = (Json.str(k.get("on"), "") + "  " + Json.str(k.get("kun"), "")).trim();
+        Cards.make(this, r, () -> makeKanjiCards(rows, i + 1));
+    }
+
     /** The saved report of a crash, to copy and send. */
     private void problemReport(String title, File f) {
         String text;
@@ -1390,7 +1425,7 @@ public final class MainActivity extends Activity {
                     sq.name = com.batchmine.pocket.core.Shows.pretty(name);
                     if (e.episode >= 0) { sq.season = Math.max(e.season, 0); sq.episode = e.episode; }
                     List<String> notes = new ArrayList<>();
-                    List<Map<String, Object>> found = com.batchmine.pocket.core.SubSearch.search(sq, lg, app.prefs().getString("subdl_key", ""), notes);
+                    List<Map<String, Object>> found = com.batchmine.pocket.core.SubSearch.search(sq, lg, app.prefs().getString("subdl_key", ""), app.prefs().getString("jimaku_key", ""), notes);
                     for (Map<String, Object> x : found) x.put("direct", true);
                     r = new java.util.LinkedHashMap<>();
                     r.put("results", new ArrayList<Object>(found));
@@ -2106,6 +2141,15 @@ public final class MainActivity extends Activity {
         Ui.pickRow(g, "SubDL key (subtitle search on the phone)", app.prefs().getString("subdl_key", "").isEmpty() ? "not set" : "set", v -> {
             android.widget.EditText kx = Ui.input(this, app.prefs().getString("subdl_key", ""), "free key from subdl.com");
             Ui.dialog(this).setTitle("SubDL key").setView(kx).setPositiveButton("Save", (d, w) -> { app.prefs().edit().putString("subdl_key", kx.getText().toString().trim()).apply(); show(); }).setNegativeButton("Cancel", null).show();
+        });
+        final String[] rubyKeys = {"unknown", "all", "off"}, rubyNames = {"Over words I don't know yet", "Over every word", "Off"};
+        String rubyNow = app.prefs().getString("ja_ruby", "unknown");
+        Ui.pickRow(g, "Japanese: furigana", rubyNames[Math.max(0, java.util.Arrays.asList(rubyKeys).indexOf(rubyNow))], v ->
+            Ui.dialog(this).setTitle("Furigana over kanji (needs a Japanese dictionary)").setItems(rubyNames, (d, i) -> { app.prefs().edit().putString("ja_ruby", rubyKeys[i]).apply(); show(); }).show());
+        Ui.pickRow(g, "Japanese: cards for weak kanji", "the commonest kanji your known words hardly use", v -> weakKanjiDialog());
+        Ui.pickRow(g, "Jimaku key (Japanese subtitles)", app.prefs().getString("jimaku_key", "").isEmpty() ? "not set" : "set", v -> {
+            android.widget.EditText kx = Ui.input(this, app.prefs().getString("jimaku_key", ""), "API key: jimaku.cc → your account");
+            Ui.dialog(this).setTitle("Jimaku key").setView(kx).setPositiveButton("Save", (d, w) -> { app.prefs().edit().putString("jimaku_key", kx.getText().toString().trim()).apply(); show(); }).setNegativeButton("Cancel", null).show();
         });
         Ui.pickRow(g, "Card tray", Tray.count() + " waiting", v -> Tray.show(this, this::show));
         Ui.switchRow(g, "Sound: cut the silence at the ends", "The line's sound is decoded and trimmed (kept as .wav)", app.prefs().getBoolean("snd_trim", false), (b, on) -> app.prefs().edit().putBoolean("snd_trim", on).apply());
