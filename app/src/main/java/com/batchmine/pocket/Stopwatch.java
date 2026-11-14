@@ -24,6 +24,7 @@ final class Stopwatch {
 
     private static final Handler H = new Handler(Looper.getMainLooper());
     private static String kind;                        // "watch" / "read" while one runs
+    private static boolean paused;                     // paused by a tap on the clock in the bar (until the screen is left)
     private static Busy busy;
     private static long lastActive;
     private static int unsaved;
@@ -33,7 +34,7 @@ final class Stopwatch {
             long now = System.currentTimeMillis();
             int idle = App.get().prefs().getInt("watch".equals(kind) ? "sw_idle_watch" : "sw_idle_read", "watch".equals(kind) ? 20 : 90);
             boolean on = (busy != null && busy.now()) || idle <= 0 || now - lastActive <= idle * 1000L;
-            if (on) { add(kind, 1); }
+            if (on && !paused) { add(kind, 1); }
             H.postDelayed(this, 1000);
         }
     };
@@ -51,13 +52,44 @@ final class Stopwatch {
     /** A screen where the time counts (Player: "watch", Reader: "read") came to the front. BUSY says "counts without a touch" (a video playing). */
     static void start(String k, Busy b) {
         stop();
-        kind = k; busy = b; lastActive = System.currentTimeMillis();
+        kind = k; busy = b; paused = false; lastActive = System.currentTimeMillis();
         H.postDelayed(TICK, 1000);
     }
 
     static void stop() {
         H.removeCallbacks(TICK);
         kind = null; busy = null;
+    }
+
+    /** 12:34, or 1:02:03 from an hour on. */
+    static String clock(int s) {
+        s = Math.max(0, s);
+        return s >= 3600 ? String.format(Locale.ROOT, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String.format(Locale.ROOT, "%d:%02d", s / 60, s % 60);
+    }
+
+    /**
+     * A small clock for a bar: today's time of this kind ("watch" or "read"), counting up while the stopwatch runs. A tap
+     * pauses and resumes it (a coffee break with the video paused is counted anyway otherwise); it starts again when the
+     * screen is left and opened again.
+     */
+    static android.widget.TextView chip(android.content.Context c, final String k, int fg, int bg) {
+        final android.widget.TextView t = Ui.pill(c, "", fg, bg);
+        final Runnable[] r = new Runnable[1];
+        r[0] = new Runnable() {
+            @Override public void run() {
+                t.setText((paused ? "⏸ " : "⏱ ") + clock(seconds(day(System.currentTimeMillis()), k)));
+                H.removeCallbacks(this);
+                if (t.isAttachedToWindow()) H.postDelayed(this, 1000);
+            }
+        };
+        t.addOnAttachStateChangeListener(new android.view.View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(android.view.View v) { r[0].run(); }
+            @Override public void onViewDetachedFromWindow(android.view.View v) { H.removeCallbacks(r[0]); }
+        });
+        t.setOnClickListener(v -> { paused = !paused; r[0].run(); Ui.toast(c, paused ? "Stopwatch paused: tap again to go on" : "Stopwatch running"); });
+        t.setContentDescription("Time today (" + ("watch".equals(k) ? "watching" : "reading") + "): tap to pause or resume");
+        r[0].run();
+        return t;
     }
 
     /** Something happened on screen (a touch). */

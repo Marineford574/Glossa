@@ -259,6 +259,9 @@ public final class Player extends Activity {
         statusText = Ui.pill(this, "", 0xFFFFFFFF, 0x66000000);
         statusText.setVisibility(View.GONE);
         topBar.addView(statusText);
+        LinearLayout.LayoutParams swl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        swl.rightMargin = Ui.dp(this, 4);
+        topBar.addView(Stopwatch.chip(this, "watch", 0xFFFFFFFF, 0x66000000), swl);
         markBtn = barIcon(R.drawable.ic_pl_star_o, "Mark the line for a card");
         markBtn.setOnClickListener(v -> action("mark"));
         topBar.addView(markBtn, new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44)));

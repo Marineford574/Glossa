@@ -224,6 +224,9 @@ public final class Reader extends Activity {
         pl.leftMargin = Ui.dp(this, 6);
         pl.rightMargin = Ui.dp(this, 2);
         bar.addView(pill, pl);
+        LinearLayout.LayoutParams swl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        swl.rightMargin = Ui.dp(this, 4);
+        bar.addView(Stopwatch.chip(this, "read", Ui.DIM, Ui.CARD2), swl);
         View ls = iconBtn(R.drawable.ic_rd_listen, "Listen", v -> listen());
         listenIcon = (android.widget.ImageView) ls;
         bar.addView(ls);

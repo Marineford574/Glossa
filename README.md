@@ -42,6 +42,8 @@ The logic (dictionary import and lookup, word colours, subtitles, EPUB, sync, th
 - Not on the phone: grammar spotting, kanji table, manga panels, game text, the local audio server, word-audio folder, pitch practice, Kitsunekko.
 - A dictionary zip with a damaged checksum (the NHK file I tested has one) is refused: download it again.
 
+- Stopwatch: the Reader and the Player bars show today's reading / watching time as a small clock (⏱ 12:34); tap it to pause and resume. The time still counts by itself while a video plays or you touch the screen, and goes to the PC at each sync.
+
 ## Limits
 
 - Sound is cut from the video as it is (no re-encoding): AAC (most MP4 / MKV) and Opus / Vorbis (.webm). Other sound formats: the card is kept for the PC.
