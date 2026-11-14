@@ -17,6 +17,7 @@ import com.batchmine.pocket.core.Json;
 import com.batchmine.pocket.core.WordStore;
 
 import java.util.Collections;
+import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -454,10 +455,20 @@ public final class WordSheet {
         java.util.Set<Integer> on = firstDictionary(r);
         sb.append("<html><head><meta name=viewport content='width=device-width, initial-scale=1'><style>")
           .append("body{background:").append(Ui.hex(Ui.CARD)).append(";color:").append(Ui.hex(Ui.TEXT)).append(";font:16px/1.5 sans-serif;margin:0;padding:0 2px 20px;--fg:").append(Ui.hex(Ui.TEXT)).append(";--text-color:").append(Ui.hex(Ui.TEXT)).append("}")
-          .append("a{color:").append(Ui.hex(Ui.ACCENT)).append("}.hd{margin:10px 0 4px;font-weight:bold;font-size:17px;display:flex;align-items:center;gap:8px}.hd small{color:").append(Ui.hex(Ui.DIM)).append(";font-weight:normal;font-size:13px}")
-          .append(".hd input{width:22px;height:22px;flex:none;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}.blk{border-top:1px solid ").append(Ui.hex(Ui.LINE)).append(";margin-top:6px}")
-          .append(".via{color:").append(Ui.hex(Ui.DIM)).append(";font-size:13px;margin-bottom:4px}ol{padding-left:22px;margin:4px 0}summary{color:").append(Ui.hex(Ui.DIM)).append(";cursor:pointer}")
-          .append("details{margin:2px 0}.none{color:").append(Ui.hex(Ui.DIM)).append(";margin-top:20px}")
+          // the look of the PC's word card (.gx in mine_gui.css): entries split by a dashed line, a head with the part of speech in the accent
+          // colour and the definition language as a small framed label, faint numbers, tags as small pills, examples in italics behind a bar
+          .append("a{color:").append(Ui.hex(Ui.ACCENT)).append("}")
+          .append(".hd{margin:2px 0 2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.hd .tm{font-weight:600;font-size:16px}")
+          .append(".hd .pos{font-size:13px;color:").append(Ui.hex(Ui.ACCENT)).append(";font-weight:700}")
+          .append(".hd .glang{font-size:11px;font-weight:700;letter-spacing:.05em;color:").append(Ui.hex(Ui.DIM)).append(";border:1px solid ").append(Ui.hex(Ui.LINE)).append(";border-radius:4px;padding:0 4px}")
+          .append(".hd small{color:").append(Ui.hex(Ui.DIM)).append(";font-size:12px;margin-left:auto}")
+          .append(".hd input{width:20px;height:20px;flex:none;margin:0;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}")
+          .append(".blk{line-height:1.45;font-size:15px}.blk+.blk{margin-top:10px;padding-top:8px;border-top:1px dashed ").append(Ui.hex(Ui.LINE)).append("}")
+          .append(".via{color:").append(Ui.hex(Ui.DIM)).append(";font-size:12.5px;margin-bottom:2px}")
+          .append("ol{padding-left:1.4em;margin:2px 0 0}ol>li{margin:3px 0;padding-left:2px}li::marker{color:").append(Ui.hex(Ui.DIM)).append(";font-size:12px}ol ol{list-style:lower-alpha}ul{padding-left:1.2em;margin:2px 0}")
+          .append("[data-sc-content*=example],[data-sc-class*=example],.gexa{font-style:italic;font-size:13.5px;color:").append(Ui.hex(Ui.DIM)).append(";margin:1px 0 0 2px;padding-left:8px;border-left:2px solid ").append(Ui.hex(Ui.LINE)).append(";list-style:none}")
+          .append("[data-sc-content=tag],[data-sc-class=tag],[data-sc-content*=tags]>span,.gtag{display:inline-block;font-size:11px;line-height:16px;padding:0 6px;margin-right:5px;border-radius:99px;background:rgba(127,127,127,.18);color:").append(Ui.hex(Ui.DIM)).append(";vertical-align:1px;font-style:normal}")
+          .append("summary{color:").append(Ui.hex(Ui.DIM)).append(";font-size:13px;cursor:pointer}details{margin:3px 0;font-size:13.5px}.none{color:").append(Ui.hex(Ui.DIM)).append(";margin-top:20px}")
           // the single meanings, each with its own tick box (the PC's .gpick): tap a meaning to put it on the card
           .append("input.gpick{width:19px;height:19px;margin:0 7px 0 0;vertical-align:-4px;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}")
           .append("li.gli{border-radius:7px;padding:2px 4px;margin:1px -4px}li.gli.picked{background:").append(Ui.hex(Ui.mix(Ui.CARD, Ui.ACCENT, 0.2f))).append("}")
@@ -490,7 +501,9 @@ public final class WordSheet {
             String key = h.term + "|" + h.via;
             String gl = glossLang(h.dict, lang);
             sb.append("<div class=blk data-i=").append(i).append(DefLangs.on(lang, gl) ? "" : " data-off=1 style='display:none'").append(" data-l='").append(esc(gl)).append("'><div class=hd><input class=pk type=checkbox data-i=").append(i).append(on.contains(i) ? " checked" : "")
-              .append(" onchange='pick()'><span>").append(esc(h.term)).append(" <small>").append(esc(h.pos)).append(" · ").append(esc(h.dict)).append("</small></span></div>");
+              .append(" onchange='pick()'><span class=tm>").append(esc(h.term)).append("</span>")
+              .append(h.pos == null || h.pos.isEmpty() ? "" : "<span class=pos>" + esc(h.pos) + "</span>")
+              .append("<span class=glang>").append(esc(gl.toUpperCase(Locale.ROOT))).append("</span><small>").append(esc(h.dict)).append("</small></div>");
             if (h.via != null && !key.equals(last)) sb.append("<div class=via>").append(esc(h.via)).append("</div>");
             last = key;
             sb.append(h.html).append("</div>");

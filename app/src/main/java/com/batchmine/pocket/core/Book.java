@@ -23,10 +23,12 @@ import java.util.zip.ZipInputStream;
  */
 public final class Book {
     public String id = "", title = "", lang = "", source = "";
+    public boolean manga;                  // a comic from the PC: one chapter per page, the page's picture in <id>.pdf next to the book
     public final List<Chapter> chapters = new ArrayList<>();
 
     public static final class Chapter {
         public String title;
+        public int page;                   // manga: the page of the PDF (1 …), 0 = none
         public final List<String> paras = new ArrayList<>();
         public Chapter(String title) { this.title = title; }
     }
@@ -37,11 +39,13 @@ public final class Book {
     public Map<String, Object> toJson() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", id); m.put("title", title); m.put("lang", lang); m.put("source", source);
+        if (manga) m.put("manga", true);
         List<Object> cs = new ArrayList<>();
         for (Chapter c : chapters) {
             Map<String, Object> cm = new LinkedHashMap<>();
             cm.put("title", c.title);
             cm.put("paras", new ArrayList<Object>(c.paras));
+            if (c.page > 0) cm.put("page", c.page);
             cs.add(cm);
         }
         m.put("chapters", cs);
@@ -52,11 +56,13 @@ public final class Book {
         Book b = new Book();
         b.id = Json.str(m.get("id"), ""); b.title = Json.str(m.get("title"), ""); b.lang = Json.str(m.get("lang"), "");
         b.source = Json.str(m.get("source"), "");
+        b.manga = Boolean.TRUE.equals(m.get("manga"));
         for (Object c : Json.arr(m.get("chapters"))) {
             Map<String, Object> cm = Json.obj(c);
             Chapter ch = new Chapter(Json.str(cm.get("title"), ""));
             for (Object p : Json.arr(cm.get("paras"))) ch.paras.add(Json.str(p, ""));
-            if (!ch.paras.isEmpty()) b.chapters.add(ch);
+            ch.page = (int) Json.num(cm.get("page"), 0);
+            if (!ch.paras.isEmpty() || ch.page > 0) b.chapters.add(ch);         // a manga page without text is still a page
         }
         return b;
     }

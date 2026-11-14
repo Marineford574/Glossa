@@ -100,6 +100,8 @@ final class Tray {
             }
             box.addView(g);
             box.addView(Ui.primary(a, "Make all " + l.size() + " cards", v -> { Ui.dismiss(d[0]); sendAll(a, changed); }));
+            if (App.get().pc() != null)                           // 8  the PC makes them: with the audio and the picture cut from its own copy of the video
+                box.addView(Ui.button(a, "Make them on the PC", v -> { Ui.dismiss(d[0]); sendToPc(a, changed); }));
             box.addView(Ui.button(a, "Drop them all", v -> Ui.dialog(a).setTitle("Drop all cards in the tray?").setMessage("They are not made.")
                     .setPositiveButton("Drop", (x, w) -> { save(new ArrayList<>()); Ui.dismiss(d[0]); show(a, changed); if (changed != null) changed.run(); })
                     .setNegativeButton("Cancel", null).show()));
@@ -142,6 +144,18 @@ final class Tray {
         }));
         box.addView(Ui.button(a, "Drop this card", v -> { List<Cards.Request> n = all(); if (at < n.size()) n.remove(at); save(n); Ui.dismiss(d[0]); show(a, changed); if (changed != null) changed.run(); }));
         d[0] = Ui.sheet(a, r.word, Ui.scroll(a, box), true);
+    }
+
+    /** The whole tray goes to the PC to be made there (its audio and picture come from the PC's copy of the video, and it needs no AnkiDroid here);
+     *  a sync starts at once so they are made now. */
+    static void sendToPc(Activity a, Runnable changed) {
+        List<Cards.Request> l = all();
+        if (l.isEmpty()) return;
+        save(new ArrayList<>());
+        for (Cards.Request r : l) Cards.keepForPc(a, r, null, null, false);
+        Ui.toast(a, l.size() + " card(s) sent to the PC");
+        if (changed != null) changed.run();
+        if (a instanceof MainActivity) ((MainActivity) a).syncNow();
     }
 
     /** Makes the cards one after the other; one that fails stays in the tray. */

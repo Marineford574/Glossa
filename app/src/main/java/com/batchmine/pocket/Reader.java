@@ -17,6 +17,7 @@ import android.widget.ListView;
 import android.widget.TextView;
 
 import com.batchmine.pocket.core.Book;
+import com.batchmine.pocket.core.PcLink;
 import com.batchmine.pocket.core.Subs;
 
 import java.io.File;
@@ -49,9 +50,11 @@ public final class Reader extends Activity {
     private WordBar wordBar;
     private float size = 19;
     private int base, count;                     // the page on screen: paragraphs base .. base+count-1 of the chapter
-    private boolean full;                    // fullscreen reading: the bars are hidden
-    private View topBarV, topLine, navBarV;
-    private TextView fullBtn;
+    private View topBarV, topLine, navBarV, topBox, bottomBox;
+    private boolean barsShown = true;
+    private android.widget.ImageView mangaImg;      // a manga from the PC: the page's picture above the text of its bubbles
+    private int mangaShown = -1;
+    private Runnable recolour;                // colours the words of the open page again without first showing it plain (after a card / known)
     private android.widget.ImageView fsTop;
     private SharedPreferences sp;
     private TextToSpeech tts;
@@ -106,55 +109,87 @@ public final class Reader extends Activity {
         firstPara = Math.max(0, sp.getInt("rp_" + id, 0));
         if (sp.getBoolean("rd_awake", false)) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        LinearLayout root = Ui.col(this);
         Ui.bars(this);
-        root.setBackgroundColor(Ui.BG);
+        // the text fills the screen; the bars lie over it and slide away while you scroll down, back while you scroll up
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackgroundColor(Ui.BG);
+        list = new ListView(this);
+        list.setDividerHeight(0);
+        list.setBackgroundColor(Ui.BG);
+        list.setClipToPadding(false);
+        list.setOnScrollListener(new android.widget.AbsListView.OnScrollListener() {
+            private int state, lastFirst = -1, lastTop, moved;
+            @Override public void onScrollStateChanged(android.widget.AbsListView v, int s) { state = s; moved = 0; }
+            @Override public void onScroll(android.widget.AbsListView v, int first, int vis, int total) {
+                progress();
+                View c0 = v.getChildAt(0);
+                int top = c0 == null ? 0 : c0.getTop();
+                if (state != SCROLL_STATE_IDLE && lastFirst >= 0) {
+                    int d = first == lastFirst ? lastTop - top : (first > lastFirst ? Ui.dp(Reader.this, 30) : -Ui.dp(Reader.this, 30));
+                    moved = (moved > 0) == (d > 0) ? moved + d : d;          // the same direction adds up; a turn starts again
+                    if (moved > Ui.dp(Reader.this, 24)) bars(false);
+                    else if (moved < -Ui.dp(Reader.this, 16)) bars(true);
+                }
+                if (first + vis >= total && total > 0) {                    // the end of the page: Next must be reachable
+                    View last = v.getChildAt(vis - 1);
+                    if (last != null && last.getBottom() <= v.getHeight() - v.getPaddingBottom() + Ui.dp(Reader.this, 4) && state != SCROLL_STATE_IDLE) bars(true);
+                }
+                lastFirst = first;
+                lastTop = top;
+            }
+        });
+        FrameLayout.LayoutParams listLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        if (book.manga) {
+            int h = getResources().getDisplayMetrics().heightPixels, split = Math.round(h * 0.6f);
+            mangaImg = new android.widget.ImageView(this);
+            mangaImg.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+            mangaImg.setBackgroundColor(Ui.BG);
+            mangaImg.setOnClickListener(v -> bars(!barsShown));                      // a tap on the picture shows or hides the bars
+            frame.addView(mangaImg, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, split, Gravity.TOP));
+            listLp.topMargin = split;
+        }
+        frame.addView(list, listLp);
+
+        LinearLayout top = Ui.col(this);
+        top.setBackgroundColor(Ui.BG);
+        top.setClickable(true);
         topBarV = topBar();
-        root.addView(topBarV);
+        top.addView(topBarV);
         chapLine = Ui.text(this, "", 13, Ui.DIM);
         chapLine.setPadding(Ui.dp(this, 16), 0, Ui.dp(this, 16), Ui.dp(this, 6));
         chapLine.setSingleLine(true);
         chapLine.setEllipsize(android.text.TextUtils.TruncateAt.END);
         chapLine.setOnClickListener(v -> contents());
-        root.addView(chapLine);
+        top.addView(chapLine);
         View line = new View(this);
         line.setBackgroundColor(Ui.LINE);
-        root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        top.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
         topLine = line;
-        list = new ListView(this);
-        list.setDividerHeight(0);
-        list.setBackgroundColor(Ui.BG);
-        list.setClipToPadding(false);
-        list.setPadding(0, Ui.dp(this, 8), 0, Ui.dp(this, 24));
-        list.setOnScrollListener(new android.widget.AbsListView.OnScrollListener() {
-            @Override public void onScrollStateChanged(android.widget.AbsListView v, int s) { }
-            @Override public void onScroll(android.widget.AbsListView v, int first, int vis, int total) { progress(); }
-        });
-        root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        topBox = top;
+        frame.addView(top, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
+
+        LinearLayout bottom = Ui.col(this);
+        bottom.setClickable(true);
         undoBar = Ui.row(this);
         undoBar.setVisibility(View.GONE);
-        root.addView(undoBar);
-        wordBar = new WordBar(this, () -> draw(true));
-        root.addView(wordBar.view());
+        undoBar.setBackgroundColor(Ui.BG);
+        bottom.addView(undoBar);
+        wordBar = new WordBar(this, this::soft);
+        bottom.addView(wordBar.view());
         navBarV = navBar();
-        root.addView(navBarV);
-        FrameLayout frame = new FrameLayout(this);
-        frame.setBackgroundColor(Ui.BG);
-        frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        fullBtn = Ui.text(this, "⤡", 20, Ui.TEXT);
-        fullBtn.setGravity(Gravity.CENTER);
-        fullBtn.setBackground(Ui.round(Ui.mix(Ui.BG, Ui.TEXT, 0.18f), Ui.dp(this, 99)));
-        fullBtn.setAlpha(0.55f);
-        fullBtn.setContentDescription("Show the bars again");
-        fullBtn.setVisibility(View.GONE);
-        fullBtn.setOnClickListener(v -> fullscreen(false));
-        FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 40), Gravity.TOP | Gravity.END);
-        fl.topMargin = Ui.dp(this, 28);
-        fl.rightMargin = Ui.dp(this, 10);
-        frame.addView(fullBtn, fl);
+        navBarV.setBackgroundColor(Ui.BG);
+        bottom.addView(navBarV);
+        bottomBox = bottom;
+        frame.addView(bottom, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
+        // the text starts under the top bar and ends above the bottom one (it scrolls under them once they slide away)
+        View.OnLayoutChangeListener pads = (v, l1, t1, r1, b1, l0, t0, r0, b0) -> {
+            int pt = (book.manga ? 0 : topBox.getHeight()) + Ui.dp(this, 8), pb = bottomBox.getHeight() + Ui.dp(this, 24);
+            if (list.getPaddingTop() != pt || list.getPaddingBottom() != pb) list.post(() -> list.setPadding(0, pt, 0, pb));
+        };
+        top.addOnLayoutChangeListener(pads);
+        bottom.addOnLayoutChangeListener(pads);
         setContentView(frame);
         draw(false);
-        if (sp.getBoolean("rd_full", false)) fullscreen(true);
     }
 
     // ---------------------------------------------------------------- the bars
@@ -192,7 +227,6 @@ public final class Reader extends Activity {
         View ls = iconBtn(R.drawable.ic_rd_listen, "Listen", v -> listen());
         listenIcon = (android.widget.ImageView) ls;
         bar.addView(ls);
-        bar.addView(iconBtn(R.drawable.ic_pl_fs, "Fullscreen", v -> fullscreen(true)));
         bar.addView(iconBtn(R.drawable.ic_pl_items, "Contents", v -> contents()));
         bar.addView(iconBtn(R.drawable.ic_pl_tune, "Reader options", v -> options()));
         return bar;
@@ -243,23 +277,13 @@ public final class Reader extends Activity {
         posText.setText((chapter + 1) + " / " + book.chapters.size() + (pg == null ? "" : " · page " + (pageOf(pg, base) + 1) + "/" + pg.size()) + " · " + Math.round(f * 100) + " %");
     }
 
-    // ---------------------------------------------------------------- fullscreen
-    /** Hides the bars (and the phone's own) so the text fills the screen; the small ⤡ button, Back or the options bring them back. */
-    private void fullscreen(boolean on) {
-        full = on;
-        sp.edit().putBoolean("rd_full", on).apply();
-        int v = on ? View.GONE : View.VISIBLE;
-        topBarV.setVisibility(v);
-        topLine.setVisibility(v);
-        chapLine.setVisibility(v);
-        navBarV.setVisibility(on ? View.GONE : View.VISIBLE);
-        fullBtn.setVisibility(on ? View.VISIBLE : View.GONE);
-        View dv = getWindow().getDecorView();
-        dv.setSystemUiVisibility(on ? (View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY) : View.SYSTEM_UI_FLAG_VISIBLE);
-        if (!on) Ui.bars(this);
-        if (list != null) list.post(this::progress);
-        if (on) Ui.toast(this, "Tap ⤡ (top right) or Back to show the bars again");
+    // ---------------------------------------------------------------- the bars slide away
+    /** Shows or hides the bars over the text (scrolling down hides them, scrolling up or the end of the page brings them back). */
+    private void bars(boolean show) {
+        if (show == barsShown || topBox == null) return;
+        barsShown = show;
+        topBox.animate().translationY(show ? 0 : -topBox.getHeight()).setDuration(180).start();
+        bottomBox.animate().translationY(show ? 0 : bottomBox.getHeight()).setDuration(180).start();
     }
 
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) { return Pad.key(this, e, "reader", this::pad) || super.dispatchKeyEvent(e); }
@@ -283,7 +307,7 @@ public final class Reader extends Activity {
         }
     }
 
-    @Override public void onBackPressed() { if (wordBar != null && wordBar.showing()) wordBar.hide(); else if (full) fullscreen(false); else super.onBackPressed(); }
+    @Override public void onBackPressed() { if (wordBar != null && wordBar.showing()) wordBar.hide(); else if (!barsShown) bars(true); else super.onBackPressed(); }
 
     // ---------------------------------------------------------------- pages
     /** How much of a chapter is on one page: 0 = the whole chapter, otherwise about this many characters. */
@@ -345,7 +369,7 @@ public final class Reader extends Activity {
         undoBar.setPadding(Ui.dp(this, 16), Ui.dp(this, 6), Ui.dp(this, 12), 0);
         undoBar.setGravity(Gravity.CENTER_VERTICAL);
         undoBar.addView(Ui.weight(Ui.text(this, words.size() + " word(s) of chapter " + (left + 1) + " marked known", 13, Ui.DIM), 1));
-        undoBar.addView(Ui.small(this, "Undo", v -> { app.store(lang()).markUnknown(words); undoBar.setVisibility(View.GONE); draw(true); }));
+        undoBar.addView(Ui.small(this, "Undo", v -> { app.store(lang()).markUnknown(words); undoBar.setVisibility(View.GONE); soft(); }));
         undoBar.setVisibility(View.VISIBLE);
         undoBar.postDelayed(() -> undoBar.setVisibility(View.GONE), 12000);
     }
@@ -441,12 +465,12 @@ public final class Reader extends Activity {
         l.addView(g2);
         l.addView(Ui.section(this, "Screen"));
         LinearLayout g3 = Ui.group(this);
+        Ui.switchRow(g3, "Open the word card at once", "Tapping a word opens its whole card (as on the PC) instead of the small bar at the bottom.", app.flag("rd_popup", false), (b, on) -> sp.edit().putBoolean("rd_popup", on).apply());
         Ui.switchRow(g3, "Keep the screen on", "While a book is open.", sp.getBoolean("rd_awake", false), (b, on) -> {
             sp.edit().putBoolean("rd_awake", on).apply();
             if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         });
-        Ui.pickRow(g3, "Fullscreen reading", "Hides the bars", v -> { Ui.dismiss(opts[0]); fullscreen(true); });
         l.addView(g3);
         opts[0] = Ui.sheet(this, "Reader options", Ui.scroll(this, l), true);
     }
@@ -596,6 +620,7 @@ public final class Reader extends Activity {
         base = pg.get(pgi)[0];
         count = pg.get(pgi)[1] - base;
         if (lastTop) at = base;
+        showMangaPage(ch);
         chapLine.setText("Chapter " + (chapter + 1) + " of " + book.chapters.size() + " · " + ch.title);
         boolean canBack = chapter > 0 || pgi > 0, canNext = chapter < book.chapters.size() - 1 || pgi + 1 < pg.size();
         backBtn.setEnabled(canBack);
@@ -605,9 +630,9 @@ public final class Reader extends Activity {
         unkText.setText("counting…");
         col.forget();
         final android.graphics.Typeface face = typeface();
+        final java.util.Map<Integer, CharSequence> cache = new java.util.concurrent.ConcurrentHashMap<>();
+        final java.util.Set<Integer> asked = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
         BaseAdapter ad = new BaseAdapter() {
-            private final java.util.Map<Integer, CharSequence> cache = new java.util.concurrent.ConcurrentHashMap<>();
-            private final java.util.Set<Integer> asked = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
             /** Colours paragraphs FROM..TO off the screen's thread (the dictionary is read from disk), then updates the lines on screen. */
             private void colour(int from, int to) {
@@ -657,10 +682,64 @@ public final class Reader extends Activity {
             }
         };
         list.setAdapter(ad);
+        // after a card or "known": the page keeps its colours; the paragraphs are coloured again off screen and only then swapped in, so
+        // only the words that changed change
+        recolour = () -> app.bg(() -> {
+            if (list.getAdapter() != ad) return;
+            col.forget();
+            java.util.Map<Integer, CharSequence> fresh = new java.util.HashMap<>();
+            for (Integer k : new ArrayList<>(cache.keySet())) {
+                if (list.getAdapter() != ad) return;
+                fresh.put(k, col.spans(ch.paras.get(k), (word, start, end, text) -> tapped(word, start, text)));
+            }
+            app.post(() -> {
+                if (list.getAdapter() != ad) return;
+                cache.putAll(fresh);
+                for (int c = 0; c < list.getChildCount(); c++) {
+                    View child = list.getChildAt(c);
+                    Object tag = child.getTag();
+                    if (child instanceof TextView && tag instanceof Integer && fresh.containsKey(tag)) ((TextView) child).setText(fresh.get(tag));
+                }
+                countUnknown();
+            });
+        });
         list.setSelection(Math.max(0, Math.min(at - base, count - 1)));
         list.post(this::progress);
         countUnknown();
         save();
+    }
+
+    /** A manga from the PC: the picture of the page (chapter) being read, from a copy kept on the phone, else asked of the PC (the next page too). */
+    private void showMangaPage(Book.Chapter ch) {
+        if (mangaImg == null || ch.page <= 0) return;
+        mangaShown = ch.page;
+        mangaPicture(ch.page, true);
+        mangaPicture(ch.page + 1, false);
+    }
+
+    private void mangaPicture(int page, boolean show) {
+        File f = new File(app.dir("manga"), book.id + "_" + page + ".jpg");
+        Runnable put = () -> {
+            if (!show || mangaShown != page || mangaImg == null) return;
+            android.graphics.Bitmap bm = android.graphics.BitmapFactory.decodeFile(f.getPath());
+            if (bm != null) mangaImg.setImageBitmap(bm);
+        };
+        if (f.length() > 500) { put.run(); return; }
+        if (show) mangaImg.setImageDrawable(null);
+        PcLink pc = app.pc();
+        if (pc == null || !book.id.startsWith("pc")) { if (show) Ui.toast(this, "Link the PC to see the picture of this page"); return; }
+        app.bg(() -> {
+            try { pc.download("/api/pocket/mangapage?key=" + book.id.substring(2) + "&n=" + page + "&w=900", f, null); }
+            catch (IOException | RuntimeException e) { f.delete(); return; }
+            if (f.length() > 500) app.post(() -> { if (!isFinishing()) put.run(); });
+        });
+    }
+
+    /** After a card or a word marked known: the colours stay; a moment later only the words that changed change. */
+    private void soft() {
+        if (recolour == null || list == null) { draw(true); return; }
+        list.removeCallbacks(recolour);
+        list.postDelayed(recolour, 700);
     }
 
     private void tapped(String word, int at, String text) {
@@ -681,8 +760,8 @@ public final class Reader extends Activity {
             if (si + k < sents.length) r.after.add(new Cards.Ctx(sents[si + k], 0, 0));
         }
         r.title = book.title;
-        if (app.flag("rd_bar", true)) wordBar.show(lang(), word, r);       // a bar at the bottom first; its ⌃ opens the whole sheet
-        else WordSheet.show(this, lang(), word, r, () -> draw(true));
+        if (!app.flag("rd_popup", false)) { bars(true); wordBar.show(lang(), word, r); }   // a bar at the bottom first; its ⌃ opens the whole sheet
+        else WordSheet.show(this, lang(), word, r, this::soft);                          // Settings: the word card opens at once
     }
 
     /** Marks the unknown words of this chapter as known (after you have read it), with the list to untick first. */
@@ -691,7 +770,7 @@ public final class Reader extends Activity {
         Set<String> unk = new LinkedHashSet<>(unknown.keySet());
         Ui.dialog(this).setTitle(unk.size() + " unknown words in this chapter")
                 .setMessage("Mark all of them as known? (Looked-up words stay as they are; you can undo each one in its word card.)")
-                .setPositiveButton("Mark as known", (d, i) -> { app.store(lang()).markKnown(new HashSet<>(unk)); draw(true); })
+                .setPositiveButton("Mark as known", (d, i) -> { app.store(lang()).markKnown(new HashSet<>(unk)); soft(); })
                 .setNegativeButton("Cancel", null).show();
     }
 }

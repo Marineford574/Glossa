@@ -326,6 +326,9 @@ public final class MainActivity extends Activity {
 
     private void sync() { sync(true); }
 
+    /** Starts a sync at once (for the tray: its cards go to the PC). */
+    void syncNow() { sync(true); }
+
     /** quiet: from the start of the app - it says nothing if the PC is not there. */
     private void sync(boolean loud) {
         PcLink pc = app.pc();
@@ -977,7 +980,9 @@ public final class MainActivity extends Activity {
             float frac = app.prefs().getFloat("rf_" + bk.id, 0);
             if (frac > 0.005f) { View pr = Ui.progress(this, frac); ((LinearLayout.LayoutParams) pr.getLayoutParams()).topMargin = Ui.dp(this, 8); it.addView(pr); }
             it.setOnLongClickListener(v -> { bookMenu(bk); return true; });
-            Ui.add(l, withPicture(it, bookCover(bk.id, bk.title, 54, 76)), 8);
+            View pic = bookCover(bk.id, bk.title, 54, 76);
+            pic.setOnClickListener(v -> openBook(bk));               // tap the cover: the book opens at once (the row opens its page)
+            Ui.add(l, withPicture(it, pic), 8);
         }
         return Ui.scroll(this, l);
     }
@@ -1119,6 +1124,23 @@ public final class MainActivity extends Activity {
                 .setNegativeButton("Cancel", null).show();
     }
 
+    /** The cover of a book, large, on the whole screen (a tap closes it). */
+    private void showCover(BookInfo bk) {
+        File cf = coverFile(bk.id);
+        android.app.Dialog d = new android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        android.widget.ImageView iv = new android.widget.ImageView(this);
+        iv.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        iv.setBackgroundColor(0xF2000000);
+        android.graphics.Bitmap bm = cf.length() > 200 ? android.graphics.BitmapFactory.decodeFile(cf.getPath()) : null;
+        if (bm == null) { Ui.toast(this, "This book has no cover picture"); return; }
+        iv.setImageBitmap(bm);
+        iv.setContentDescription("Cover of " + bk.title + ", tap to close");
+        iv.setOnClickListener(v -> d.dismiss());
+        d.setContentView(iv);
+        d.setOnDismissListener(x -> iv.setImageDrawable(null));
+        d.show();
+    }
+
     /** The page of one book: where you are, Continue, contents, rename, delete (like the PC's Library). */
     private View bookPage(BookInfo bk) {
         LinearLayout l = Ui.col(this);
@@ -1127,7 +1149,9 @@ public final class MainActivity extends Activity {
         l.addView(backRow("Books", () -> { openBookId = null; show(); }));
         LinearLayout hero = Ui.card(this);
         LinearLayout top = Ui.row(this);
-        top.addView(bookCover(bk.id, bk.title, 84, 118));
+        View big = bookCover(bk.id, bk.title, 84, 118);
+        big.setOnClickListener(v -> showCover(bk));                  // tap the cover: it fills the screen
+        top.addView(big);
         LinearLayout tx = Ui.col(this);
         tx.setPadding(Ui.dp(this, 14), 0, 0, 0);
         TextView tt = Ui.text(this, bk.title, 19, Ui.TEXT);
@@ -1219,7 +1243,7 @@ public final class MainActivity extends Activity {
                 app.post(() -> {
                     if (bs.isEmpty()) { Ui.alert(this, "Books on the PC", "The Reader on the PC has no " + lang.toUpperCase(Locale.ROOT) + " books."); return; }
                     String[] names = new String[bs.size()];
-                    for (int i = 0; i < names.length; i++) names[i] = Json.str(Json.obj(bs.get(i)).get("title"), "?");
+                    for (int i = 0; i < names.length; i++) names[i] = (Boolean.TRUE.equals(Json.obj(bs.get(i)).get("manga")) ? "Manga · " : "") + Json.str(Json.obj(bs.get(i)).get("title"), "?");
                     Ui.choose(this, "Copy a book from the PC", names, -1, i -> {
                         String key = Json.str(Json.obj(bs.get(i)).get("key"), "");
                         Ui.toast(this, "Copying…");
@@ -1869,6 +1893,13 @@ public final class MainActivity extends Activity {
                 break;
             default:
                 if (saved.isEmpty()) { l.addView(Ui.hint(this, "Tap “Save” in a word card to keep a word for later.")); break; }
+                List<String> need = SentenceAudio.missing(app.lang());
+                if (app.pc() != null && !need.isEmpty())
+                    Kit.add(l, Kit.actionCard(this, need.size() + (need.size() == 1 ? " sentence has" : " sentences have") + " no audio on the phone",
+                            "Download them from the PC to hear them without a connection.", "Download", v -> {
+                        Ui.toast(this, "Downloading …");
+                        SentenceAudio.fetchMissing(app.lang(), 200, n -> { if (!isFinishing()) { Ui.toast(this, n + " sentence(s) kept on the phone"); show(); } });
+                    }), 8);
                 android.widget.EditText q = Ui.input(this, wordFilter, "Search your words");
                 q.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
                 q.addTextChangedListener(new android.text.TextWatcher() {
@@ -1954,7 +1985,17 @@ public final class MainActivity extends Activity {
                 r.lang = app.lang(); r.sentence = sn; r.title = src;
                 WordSheet.show(this, app.lang(), w, sn.isEmpty() ? null : r, this::show);
             };
-            LinearLayout it = wordRow(w, sn, sn.isEmpty() ? null : Kit.textButton(this, "Card", "Make a card", true, open), open);
+            LinearLayout ends = Ui.row(this);
+            ends.setGravity(Gravity.CENTER_VERTICAL);
+            if (!sn.isEmpty()) {
+                String lg = app.lang();
+                TextView pl = (TextView) Kit.textButton(this, SentenceAudio.has(lg, sn) ? "▶" : "▷", "Hear the sentence", false, v -> SentenceAudio.play(this, lg, sn));
+                ends.addView(pl);
+                LinearLayout.LayoutParams cl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                cl.leftMargin = Ui.dp(this, 6);
+                ends.addView(Kit.textButton(this, "Card", "Make a card", true, open), cl);
+            }
+            LinearLayout it = wordRow(w, sn, sn.isEmpty() ? null : ends, open);
             it.setTag("saved");
             Kit.add(l, it, 8);
             if (++shown >= 150) break;
@@ -2081,6 +2122,12 @@ public final class MainActivity extends Activity {
         l.addView(Ui.hint(this, "Sound and picture of a video line are cut on the phone (MP4 / MKV). AAC, Opus and Vorbis are cut as they are; MP3, FLAC and similar become a small .wav. With no decoder (AC-3, often) the card is left to the PC."));
 
         // ---- backup
+        l.addView(Ui.section(this, "Sentence audio"));
+        g = Ui.group(this);
+        Ui.switchRow(g, "Keep the audio of saved sentences", "Each sync downloads the PC's voice for the sentences of your saved words (a few at a time), so they play with no connection. Words → Saved has a ▶ for each.",
+                SentenceAudio.auto(), (b, on) -> app.prefs().edit().putBoolean("sa_auto", on).apply());
+        Ui.add(l, g, 0);
+
         l.addView(Ui.section(this, "Reminder"));
         g = Ui.group(this);
         Ui.switchRow(g, "Remind me once a day", "A notification at the time below, on days you have not opened the app yet.", Reminder.on(app.prefs()),

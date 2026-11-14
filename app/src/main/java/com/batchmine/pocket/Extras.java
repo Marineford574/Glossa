@@ -109,6 +109,7 @@ final class Extras {
         homeCard("trouble", 400, (a, l) -> a.homeTrouble(l));
         DefLangs.register();                               // 3  definition-language switches follow the PC
         Levels.register();                                 // 1  CEFR levels: chip + table from the PC
+        SentenceAudio.register();                          // 10 the audio of saved sentences, kept on the phone
         Genders.register();                                // 4  noun gender from the wty files on the PC
     }
 }

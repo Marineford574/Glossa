@@ -198,7 +198,9 @@ public final class Cards {
         return o;
     }
 
-    static void keepForPc(Activity a, Request r, Runnable done, String why) {
+    static void keepForPc(Activity a, Request r, Runnable done, String why) { keepForPc(a, r, done, why, true); }
+
+    static void keepForPc(Activity a, Request r, Runnable done, String why, boolean toast) {
         Map<String, Object> c = new LinkedHashMap<>();
         c.put("kind", r.kind.equals("video") && !r.videoName.isEmpty() ? "video" : "text");
         c.put("word", r.word);
@@ -214,7 +216,7 @@ public final class Cards {
         App.get().store(r.lang).addPending(c);
         String day = Stopwatch.day(System.currentTimeMillis());
         App.get().prefs().edit().putInt("cards_" + day, App.get().prefs().getInt("cards_" + day, 0) + 1).apply();
-        Ui.toast(a, (why == null ? "" : why + ": ") + "the card for “" + r.word + "” waits for the PC (made at the next sync)");
+        if (toast) Ui.toast(a, (why == null ? "" : why + ": ") + "the card for “" + r.word + "” waits for the PC (made at the next sync)");
         if (done != null) done.run();
     }
 

@@ -828,6 +828,27 @@ public final class Player extends Activity {
         LinearLayout l = Ui.col(this);
         l.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), Ui.dp(this, 16));
         android.app.Dialog[] d = new android.app.Dialog[1];
+        // the speed first, as chips that apply at once (the PC's quick settings); "More…" is the full list
+        l.addView(Ui.section(this, "Speed"));
+        float[] fast = {0.7f, 0.8f, 0.9f, 1f, 1.1f, 1.25f, 1.5f, 2f};
+        String[] fl = new String[fast.length];
+        for (int i = 0; i < fast.length; i++) fl[i] = speedLabel(fast[i]);
+        final LinearLayout speedBox = Ui.col(this);
+        Runnable[] redraw = {null};
+        redraw[0] = () -> {
+            speedBox.removeAllViews();
+            int cur = -1;
+            for (int i = 0; i < fast.length; i++) if (Math.abs(fast[i] - speed) < 0.011f) cur = i;
+            speedBox.addView(Kit.chips(this, fl, cur, i -> { setSpeed(fast[i]); redraw[0].run(); }));
+            LinearLayout step = Ui.row(this);
+            step.setPadding(0, Ui.dp(this, 8), 0, 0);
+            step.addView(Ui.weight(Ui.button(this, "− 0,05", v -> { setSpeed(Math.max(0.25f, Math.round((speed - 0.05f) * 100) / 100f)); redraw[0].run(); }), 1));
+            step.addView(Ui.weight(Ui.button(this, speedLabel(speed), v -> { Ui.dismiss(d[0]); speedMenu(); }), 1));
+            step.addView(Ui.weight(Ui.button(this, "+ 0,05", v -> { setSpeed(Math.min(4f, Math.round((speed + 0.05f) * 100) / 100f)); redraw[0].run(); }), 1));
+            speedBox.addView(step);
+        };
+        redraw[0].run();
+        l.addView(speedBox);
         l.addView(Ui.section(this, "Subtitles"));
         LinearLayout g = Ui.group(this);
         Ui.switchRow(g, "Subtitles", null, !hideSub, (b, on) -> { hideSub = !on; shown = -2; adapter.notifyDataSetChanged(); });
@@ -841,7 +862,6 @@ public final class Player extends Activity {
         l.addView(g);
         l.addView(Ui.section(this, "Playback"));
         LinearLayout g2 = Ui.group(this);
-        Ui.pickRow(g2, "Speed", speedLabel(speed), v -> { Ui.dismiss(d[0]); speedMenu(); });
         Ui.pickRow(g2, "Mode", modeName(), v -> { Ui.dismiss(d[0]); modeMenu(); });
         if (prime) {
             boolean unkOnly = "unk".equals(app.prefs().getString(lk("prime_when"), app.prefs().getString("prime_when", "all")));
