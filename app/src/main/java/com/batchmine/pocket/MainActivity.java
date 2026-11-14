@@ -88,18 +88,15 @@ public final class MainActivity extends Activity {
         body = new FrameLayout(this);
         root.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         // bottom bar: the PC side-menu icons (ICON.home / film / book / letters in mine_gui.js) with their names under them
-        View line = new View(this);
-        line.setBackgroundColor(Ui.CARD2);
-        root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, Ui.dp(this, 1))));
         LinearLayout bar = Ui.row(this);
-        bar.setBackgroundColor(Ui.CARD);
+        bar.setBackgroundColor(Ui.mix(Ui.BG, Ui.CARD, 0.65f));                 // the bottom bar: a step off the page, no line over it
         int[] icons = {R.drawable.ic_nav_home, R.drawable.ic_nav_film, R.drawable.ic_nav_book, R.drawable.ic_nav_letters};
         String[][] names = {{"home", "Home"}, {"videos", "Watch"}, {"books", "Read"}, {"words", "Words"}};
         for (int k = 0; k < names.length; k++) {
             String[] t = names[k];
             LinearLayout v = Ui.col(this);
             v.setGravity(Gravity.CENTER);
-            v.setPadding(0, Ui.dp(this, 7), 0, Ui.dp(this, 7));
+            v.setPadding(0, Ui.dp(this, 10), 0, Ui.dp(this, 10));
             v.setTag(t[0]);
             v.setContentDescription(t[1]);
             android.widget.ImageView ic = Ui.icon(this, icons[k], 22, Ui.DIM);
@@ -110,7 +107,7 @@ public final class MainActivity extends Activity {
             lb.setGravity(Gravity.CENTER);
             lb.setPadding(0, Ui.dp(this, 2), 0, 0);
             v.addView(lb);
-            v.setOnClickListener(x -> { if (t[0].equals(tab)) { openShow = null; openBookId = null; } tab = t[0]; show(); });   // the tab again: back to its list
+            v.setOnClickListener(x -> { if (t[0].equals(tab)) { openShow = null; openBookId = null; } if ("settings".equals(t[0])) settingsSec = ""; tab = t[0]; show(); });   // the tab again: back to its list
             bar.addView(v, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             tabs.add(v);
         }
@@ -229,7 +226,7 @@ public final class MainActivity extends Activity {
     }
 
     private void toSettings() {
-        if (!"settings".equals(tab)) before = tab;
+        if (!"settings".equals(tab)) { before = tab; settingsSec = ""; }      // Settings always opens on its list of groups
         tab = "settings"; show();
     }
 
@@ -238,6 +235,7 @@ public final class MainActivity extends Activity {
     @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) { return Pad.motion(this, e, "app", null) || super.dispatchGenericMotionEvent(e); }
 
     @Override public void onBackPressed() {
+        if ("settings".equals(tab) && !settingsSec.isEmpty()) { settingsSec = ""; show(); return; }   // a group: back to the list of groups
         if ("settings".equals(tab)) { tab = before; show(); return; }
         if (openShow != null || openBookId != null) { openShow = null; openBookId = null; show(); return; }
         if (!"home".equals(tab)) { tab = "home"; show(); return; }
@@ -265,7 +263,7 @@ public final class MainActivity extends Activity {
             TextView lb = (TextView) c.getChildAt(1);
             ic.setColorFilter(on ? Ui.ACCENT : Ui.DIM);
             ic.setBackground(on ? Ui.round(Ui.mix(Ui.CARD, Ui.ACCENT, 0.18f), Ui.dp(this, 14)) : null);
-            lb.setTextColor(on ? Ui.TEXT : Ui.DIM);
+            lb.setTextColor(on ? Ui.ACCENT : Ui.DIM);
             lb.setTypeface(on ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT);
         }
         boolean set = "settings".equals(tab);

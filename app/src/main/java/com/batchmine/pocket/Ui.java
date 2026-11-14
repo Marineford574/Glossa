@@ -199,7 +199,7 @@ public final class Ui {
     }
 
     // ---------------------------------------------------------------- the PC's shapes (mine_gui.css: --radius 12px, --radius-s 8px)
-    public static final int R = 12, RS = 8;
+    public static final int R = 16, RS = 12;           // the redesign: 16 dp cards, 12 dp buttons
 
     /** A shape with a pressed state: COLOR, a little darker / lighter while the finger is on it (like :hover on the PC). */
     public static android.graphics.drawable.StateListDrawable press(int color, int border, float radius) {
@@ -219,11 +219,11 @@ public final class Ui {
         b.setTextColor(TEXT);
         b.setTextSize(15);
         b.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        b.setBackground(press(mix(BG, TEXT, 0.08f), 0, dp(c, RS)));
+        b.setBackground(press(mix(BG, TEXT, 0.12f), 0, dp(c, RS)));
         b.setStateListAnimator(null);
-        b.setPadding(dp(c, 14), dp(c, 4), dp(c, 14), dp(c, 4));
-        b.setMinHeight(dp(c, 42));
-        b.setMinimumHeight(dp(c, 42));
+        b.setPadding(dp(c, 16), dp(c, 4), dp(c, 16), dp(c, 4));
+        b.setMinHeight(dp(c, 44));
+        b.setMinimumHeight(dp(c, 44));
         b.setOnClickListener(l);
         return b;
     }
@@ -256,9 +256,7 @@ public final class Ui {
 
     /** A card like the PC's .card / .lv: the card colour, a 1 px border, 12 dp corners. */
     public static GradientDrawable cardBg(Context c) {
-        GradientDrawable g = round(CARD, dp(c, R));
-        g.setStroke(Math.max(1, dp(c, 1) / 2 + 1), LINE);
-        return g;
+        return round(CARD, dp(c, R));                    // flat: no frame, the card colour against the page (as in the redesign)
     }
 
     public static LinearLayout card(Context c) {
@@ -272,7 +270,7 @@ public final class Ui {
     public static LinearLayout item(Context c, CharSequence head, CharSequence sub, View.OnClickListener l) {
         LinearLayout v = col(c);
         v.setPadding(dp(c, 14), dp(c, 12), dp(c, 14), dp(c, 12));
-        if (l != null) { android.graphics.drawable.StateListDrawable st = press(CARD, LINE, dp(c, R)); v.setBackground(st); }
+        if (l != null) { android.graphics.drawable.StateListDrawable st = press(CARD, 0, dp(c, R)); v.setBackground(st); }
         else v.setBackground(cardBg(c));
         TextView h = text(c, head, 16, TEXT);
         h.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
@@ -318,7 +316,7 @@ public final class Ui {
         }
         LinearLayout r = row(c);
         r.setPadding(0, dp(c, 11), 0, dp(c, 11));
-        r.setMinimumHeight(dp(c, 52));
+        r.setMinimumHeight(dp(c, 56));
         LinearLayout tx = col(c);
         TextView n = text(c, name, 15, TEXT);
         n.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));

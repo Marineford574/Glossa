@@ -30,9 +30,9 @@ public final class WordSheet {
     /** A rounded box in the popup (like the boxes of the PC popup). */
     private static LinearLayout boxed(Activity a) {
         LinearLayout l = Ui.col(a);
-        l.setBackground(Ui.round(Ui.CARD, Ui.dp(a, 10)));
-        int q = Ui.dp(a, 10);
-        l.setPadding(q, Ui.dp(a, 8), q, Ui.dp(a, 8));
+        l.setBackground(Ui.round(Ui.mix(Ui.BG, Ui.TEXT, 0.05f), Ui.dp(a, 14)));
+        int q = Ui.dp(a, 12);
+        l.setPadding(q, Ui.dp(a, 10), q, Ui.dp(a, 10));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.topMargin = Ui.dp(a, 8);
         l.setLayoutParams(lp);
@@ -40,9 +40,9 @@ public final class WordSheet {
     }
 
     private static TextView chip(Activity a, String s) {
-        TextView t = Ui.text(a, s, 13, Ui.TEXT);
-        t.setBackground(Ui.round(Ui.CARD2, Ui.dp(a, 12)));
-        t.setPadding(Ui.dp(a, 10), Ui.dp(a, 3), Ui.dp(a, 10), Ui.dp(a, 3));
+        TextView t = Ui.text(a, s, 12, Ui.TEXT);
+        t.setBackground(Ui.round(Ui.mix(Ui.BG, Ui.TEXT, 0.11f), Ui.dp(a, 10)));
+        t.setPadding(Ui.dp(a, 10), Ui.dp(a, 4), Ui.dp(a, 10), Ui.dp(a, 4));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.rightMargin = Ui.dp(a, 6);
         t.setLayoutParams(lp);
@@ -83,11 +83,17 @@ public final class WordSheet {
         LinearLayout box = Ui.col(a);
         float rr = Ui.dp(a, 24);
         android.graphics.drawable.GradientDrawable sheetBg = new android.graphics.drawable.GradientDrawable();
-        sheetBg.setColor(Ui.BG);
+        sheetBg.setColor(Ui.mix(Ui.BG, Ui.TEXT, 0.035f));
         sheetBg.setCornerRadii(new float[]{rr, rr, rr, rr, 0, 0, 0, 0});          // rounded at the top only: it rises from the bottom edge
         box.setBackground(sheetBg);
-        int p = Ui.dp(a, 12);
-        box.setPadding(p, p, p, p);
+        int p = Ui.dp(a, 16);
+        box.setPadding(p, Ui.dp(a, 8), p, p);
+        android.view.View grab = new android.view.View(a);                              // the little handle at the top of a bottom sheet
+        grab.setBackground(Ui.round(Ui.mix(Ui.BG, Ui.TEXT, 0.22f), Ui.dp(a, 3)));
+        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(Ui.dp(a, 40), Ui.dp(a, 5));
+        glp.gravity = Gravity.CENTER_HORIZONTAL;
+        glp.bottomMargin = Ui.dp(a, 8);
+        box.addView(grab, glp);
         final String[] word = {word0};
         final Dictionaries.Result[] res = {null};
         final Picks picks = new Picks();
@@ -95,15 +101,21 @@ public final class WordSheet {
         LinearLayout top = Ui.row(a);
         android.widget.EditText wIn = Ui.input(a, word0, "word");
         wIn.setSingleLine(true);
-        wIn.setTextSize(22);
+        wIn.setTextSize(26);
         wIn.setTypeface(Typeface.DEFAULT_BOLD);
+        wIn.setBackground(Ui.press(0x00000000, 0, Ui.dp(a, 10)));
+        wIn.setPadding(Ui.dp(a, 4), Ui.dp(a, 2), Ui.dp(a, 4), Ui.dp(a, 2));
         wIn.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
         top.addView(Ui.weight(wIn, 1));
         Button say = Ui.button(a, "🔊", v -> Speak.say(a, lang, wIn.getText().toString().trim()));
         say.setMinWidth(0);
-        top.addView(say);
+        say.setContentDescription("Hear the word");
+        top.addView(say, new LinearLayout.LayoutParams(Ui.dp(a, 48), Ui.dp(a, 48)));
         Button close = Ui.flat(a, "✕", v -> d.dismiss());
         close.setMinWidth(0);
+        LinearLayout.LayoutParams clp0 = new LinearLayout.LayoutParams(Ui.dp(a, 48), Ui.dp(a, 48));
+        clp0.leftMargin = Ui.dp(a, 4);
+        close.setLayoutParams(clp0);
         close.setContentDescription("Close");
         top.addView(close);
         box.addView(top);
@@ -130,7 +142,7 @@ public final class WordSheet {
         senE.setLineSpacing(0, 1.15f);
         senE.setVisibility(android.view.View.GONE);
         LinearLayout ctxRow = Ui.row(a);
-        senBox.addView(Ui.text(a, "Sentence (tap to change)", 12, Ui.DIM));
+        senBox.addView(Ui.text(a, "Sentence · tap to change", 12, Ui.DIM));
         senBox.addView(senT);
         senBox.addView(senE);
         senBox.addView(ctxRow);
@@ -165,7 +177,14 @@ public final class WordSheet {
             Button b2 = Ui.button(a, "+ after" + (ca[0] > 0 ? " (" + ca[0] + ")" : ""), v -> { ca[0]++; drawSen[0].run(); });
             b1.setEnabled(cb[0] < base.before.size());
             b2.setEnabled(ca[0] < base.after.size());
-            for (Button bb : new Button[]{b1, b2}) { bb.setMinWidth(0); bb.setTextSize(12); }
+            for (Button bb : new Button[]{b1, b2}) {
+                bb.setMinWidth(0); bb.setTextSize(13);
+                bb.setMinHeight(Ui.dp(a, 36)); bb.setMinimumHeight(Ui.dp(a, 36));
+                bb.setBackground(Ui.press(Ui.mix(Ui.BG, Ui.TEXT, 0.13f), 0, Ui.dp(a, 10)));
+                LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                blp.rightMargin = Ui.dp(a, 6);
+                bb.setLayoutParams(blp);
+            }
             if (!base.before.isEmpty()) ctxRow.addView(b1);
             if (!base.after.isEmpty()) ctxRow.addView(b2);
             if (cb[0] + ca[0] > 0) ctxRow.addView(Ui.button(a, "only this", v -> { cb[0] = ca[0] = 0; drawSen[0].run(); }));
@@ -254,10 +273,18 @@ public final class WordSheet {
         LinearLayout btns = Ui.row(a);
         btns.setPadding(0, Ui.dp(a, 10), 0, 0);
         WordStore ws = app.store(lang);
-        Button known = Ui.button(a, "Add to known", null), save = Ui.button(a, "Save", null), card = Ui.primary(a, "Make card", null);
-        btns.addView(Ui.weight(known, 1));
-        btns.addView(Ui.weight(save, 1));
-        btns.addView(Ui.weight(card, 1.8f));
+        Button known = Ui.button(a, "Known", null), save = Ui.button(a, "Save", null), card = Ui.primary(a, "Make card", null);
+        for (Button b : new Button[]{card, save, known}) { b.setMinHeight(Ui.dp(a, 52)); b.setMinimumHeight(Ui.dp(a, 52)); }
+        card.setBackground(Ui.press(Ui.ACCENT, 0, Ui.dp(a, 14)));
+        save.setBackground(Ui.press(Ui.mix(Ui.BG, Ui.TEXT, 0.13f), 0, Ui.dp(a, 14)));
+        known.setBackground(Ui.press(Ui.mix(Ui.BG, Ui.TEXT, 0.13f), 0, Ui.dp(a, 14)));
+        btns.addView(card, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.5f));
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        sl.leftMargin = Ui.dp(a, 8);
+        btns.addView(save, sl);
+        LinearLayout.LayoutParams kl = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        kl.leftMargin = Ui.dp(a, 8);
+        btns.addView(known, kl);
         box.addView(btns);
         d.setContentView(box);
         Window w = d.getWindow();
@@ -273,7 +300,7 @@ public final class WordSheet {
         Runnable refreshKnown = () -> {
             String key = res[0] == null ? word[0].toLowerCase() : res[0].lemma().toLowerCase();
             boolean k = ws.isKnown(key) || ws.isKnown(word[0].toLowerCase());
-            known.setText(k ? "Not known" : "Add to known");
+            known.setText(k ? "Not known" : "Known");
         };
         known.setOnClickListener(v -> {
             String lemma = res[0] == null ? word[0] : res[0].lemma();
@@ -454,23 +481,25 @@ public final class WordSheet {
         StringBuilder sb = new StringBuilder();
         java.util.Set<Integer> on = firstDictionary(r);
         sb.append("<html><head><meta name=viewport content='width=device-width, initial-scale=1'><style>")
-          .append("body{background:").append(Ui.hex(Ui.CARD)).append(";color:").append(Ui.hex(Ui.TEXT)).append(";font:16px/1.5 sans-serif;margin:0;padding:0 2px 20px;--fg:").append(Ui.hex(Ui.TEXT)).append(";--text-color:").append(Ui.hex(Ui.TEXT)).append("}")
+          .append("body{background:").append(Ui.hex(Ui.CARD)).append(";color:").append(Ui.hex(Ui.TEXT)).append(";font:14.5px/1.45 sans-serif;margin:0;padding:2px 4px 20px;--fg:").append(Ui.hex(Ui.TEXT)).append(";--text-color:").append(Ui.hex(Ui.TEXT)).append("}")
           // the look of the PC's word card (.gx in mine_gui.css): entries split by a dashed line, a head with the part of speech in the accent
           // colour and the definition language as a small framed label, faint numbers, tags as small pills, examples in italics behind a bar
           .append("a{color:").append(Ui.hex(Ui.ACCENT)).append("}")
-          .append(".hd{margin:2px 0 2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.hd .tm{font-weight:600;font-size:16px}")
+          .append(".hd{margin:2px 0 3px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}.hd .tm{font-weight:600;font-size:14.5px}")
           .append(".hd .pos{font-size:13px;color:").append(Ui.hex(Ui.ACCENT)).append(";font-weight:700}")
           .append(".hd .glang{font-size:11px;font-weight:700;letter-spacing:.05em;color:").append(Ui.hex(Ui.DIM)).append(";border:1px solid ").append(Ui.hex(Ui.LINE)).append(";border-radius:4px;padding:0 4px}")
           .append(".hd small{color:").append(Ui.hex(Ui.DIM)).append(";font-size:12px;margin-left:auto}")
-          .append(".hd input{width:20px;height:20px;flex:none;margin:0;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}")
-          .append(".blk{line-height:1.45;font-size:15px}.blk+.blk{margin-top:10px;padding-top:8px;border-top:1px dashed ").append(Ui.hex(Ui.LINE)).append("}")
+          .append(".hd input{width:16px;height:16px;flex:none;margin:0;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}")
+          .append(".blk{line-height:1.45;font-size:14.5px}.blk+.blk{margin-top:10px;padding-top:8px;border-top:1px dashed ").append(Ui.hex(Ui.LINE)).append("}")
           .append(".via{color:").append(Ui.hex(Ui.DIM)).append(";font-size:12.5px;margin-bottom:2px}")
           .append("ol{padding-left:1.4em;margin:2px 0 0}ol>li{margin:3px 0;padding-left:2px}li::marker{color:").append(Ui.hex(Ui.DIM)).append(";font-size:12px}ol ol{list-style:lower-alpha}ul{padding-left:1.2em;margin:2px 0}")
           .append("[data-sc-content*=example],[data-sc-class*=example],.gexa{font-style:italic;font-size:13.5px;color:").append(Ui.hex(Ui.DIM)).append(";margin:1px 0 0 2px;padding-left:8px;border-left:2px solid ").append(Ui.hex(Ui.LINE)).append(";list-style:none}")
           .append("[data-sc-content=tag],[data-sc-class=tag],[data-sc-content*=tags]>span,.gtag{display:inline-block;font-size:11px;line-height:16px;padding:0 6px;margin-right:5px;border-radius:99px;background:rgba(127,127,127,.18);color:").append(Ui.hex(Ui.DIM)).append(";vertical-align:1px;font-style:normal}")
           .append("summary{color:").append(Ui.hex(Ui.DIM)).append(";font-size:13px;cursor:pointer}details{margin:3px 0;font-size:13.5px}.none{color:").append(Ui.hex(Ui.DIM)).append(";margin-top:20px}")
           // the single meanings, each with its own tick box (the PC's .gpick): tap a meaning to put it on the card
-          .append("input.gpick{width:19px;height:19px;margin:0 7px 0 0;vertical-align:-4px;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}")
+          // the tick box sits in the line, in front of the meaning, as on the PC (floated, so a meaning made of blocks still flows beside it)
+          .append("input.gpick{float:left;width:16px;height:16px;margin:2px 8px 0 0;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}")
+          .append("li.gli::after{content:'';display:block;clear:both}li.gli>div:first-of-type,li.gli>span:first-of-type{display:inline}")
           .append("li.gli{border-radius:7px;padding:2px 4px;margin:1px -4px}li.gli.picked{background:").append(Ui.hex(Ui.mix(Ui.CARD, Ui.ACCENT, 0.2f))).append("}")
           .append(".padrow{outline:2px solid ").append(Ui.hex(Ui.ACCENT)).append(";outline-offset:1px;border-radius:7px;background:").append(Ui.hex(Ui.mix(Ui.CARD, Ui.ACCENT, 0.18f))).append("}")
           .append(".gnote{font-size:12.5px;color:").append(Ui.hex(Ui.DIM)).append(";margin:6px 0 2px}")
@@ -480,7 +509,7 @@ public final class WordSheet {
           // every meaning (a list item with text of its own, examples and sub-lists left out) gets a tick box, as in the PC's word card
           .append("function own(li){var c=li.cloneNode(true);c.querySelectorAll('ol,ul,details,input,[data-sc-content*=example],[data-sc-content*=notes],[data-sc-content*=info]').forEach(function(x){x.remove()});return c.textContent.replace(/\\s+/g,' ').trim()}")
           .append("function defs(){var a=[];document.querySelectorAll('input.gpick:checked').forEach(function(x){a.push({e:+x.dataset.e,l:x.dataset.l,t:x.dataset.t})});Android.defs(JSON.stringify(a))}")
-          .append("function boxes(){var n=0;document.querySelectorAll('.blk').forEach(function(b){var e=b.getAttribute('data-i'),l=b.getAttribute('data-l');b.querySelectorAll('li').forEach(function(li){var t=own(li);if(!t||t.length>600)return;")
+          .append("function boxes(){var n=0;document.querySelectorAll('.blk').forEach(function(b){var e=b.getAttribute('data-i'),l=b.getAttribute('data-l');b.querySelectorAll('li').forEach(function(li){if(li.parentNode.closest('details,[data-sc-content*=example]'))return;var t=own(li);if(!t||t.length>600)return;")
           .append("var x=document.createElement('input');x.type='checkbox';x.className='gpick';x.dataset.e=e;x.dataset.l=l;x.dataset.t=t;li.classList.add('gli');li.insertBefore(x,li.firstChild);n++;")
           .append("x.addEventListener('change',function(){li.classList.toggle('picked',x.checked);if(x.checked){var pk=b.querySelector('input.pk');if(pk&&!pk.checked){pk.checked=true;pick()}}defs()});")
           .append("li.addEventListener('click',function(ev){if(ev.target.closest('a,summary,input,details>:not(summary)'))return;if(ev.target.closest('li')!==li)return;x.checked=!x.checked;x.dispatchEvent(new Event('change'))})})});")
@@ -489,7 +518,9 @@ public final class WordSheet {
           .append("function padDef(d){var xs=Array.prototype.slice.call(document.querySelectorAll('input.gpick'));if(!xs.length)return 0;var cur=document.querySelector('input.gpick.padcur'),i=cur?xs.indexOf(cur):-1;if(cur){cur.classList.remove('padcur');(cur.closest('li')||cur.parentNode).classList.remove('padrow')}i=i<0?(d>0?0:xs.length-1):Math.max(0,Math.min(xs.length-1,i+d));var x=xs[i];x.classList.add('padcur');var r=x.closest('li')||x.parentNode;r.classList.add('padrow');r.scrollIntoView({block:'nearest'});return xs.length}")
           .append("function padSel(){var c=document.querySelector('input.gpick.padcur');if(!c)return 'none';c.click();return 'ok'}")
           .append("function showLang(l){document.querySelectorAll('.blk').forEach(function(b){b.style.display=((!l||b.getAttribute('data-l')===l)&&!b.getAttribute('data-off'))?'':'none'})}")
-          .append("document.addEventListener('DOMContentLoaded',boxes)")
+          // the examples are open under their meaning (as on the PC) without the "1 Beispiel" label; the etymology stays folded
+          .append("function openEx(){document.querySelectorAll('details').forEach(function(d){var c=d.getAttribute('data-sc-content')||'';if(/example/i.test(c)){d.open=true;var s=d.querySelector('summary');if(s)s.style.display='none'}})}")
+          .append("document.addEventListener('DOMContentLoaded',function(){openEx();boxes()})")
           .append("</script></head><body>");
         if (!r.found()) {
             sb.append("<div class=none>").append(haveDicts ? "No entry for this word in your dictionaries." :
