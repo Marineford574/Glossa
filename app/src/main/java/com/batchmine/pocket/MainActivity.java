@@ -67,7 +67,9 @@ public final class MainActivity extends Activity {
         heads.addView(pageTitle);
         top.addView(heads, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         langBtn = Kit.textButton(this, app.lang().toUpperCase(Locale.ROOT), "Language", false, v -> pickLang());
+        top.addView(Kit.textButton(this, "‹", "Previous language", false, v -> stepLang(-1)));       // arrows on every page: the language is changed without a menu
         top.addView(langBtn);
+        top.addView(Kit.textButton(this, "›", "Next language", false, v -> stepLang(1)));
         TextView syncBtn = Kit.textButton(this, "Sync", "Sync with the PC", false, v -> sync());
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         slp.leftMargin = Ui.dp(this, 8);
@@ -349,12 +351,24 @@ public final class MainActivity extends Activity {
     }
 
     // ================================================================ language, sync
-    private void pickLang() {
+    private String[] langList() {
         List<String> langs = new ArrayList<>(Arrays.asList("it", "de", "en", "fr", "es", "hr", "pt", "nl", "ru", "la", "grc"));
-        File[] ds = app.dicts.root.listFiles();
         for (Dict d : app.dicts.list()) if (!d.lang.isEmpty() && !langs.contains(d.lang)) langs.add(0, d.lang);
-        String[] items = langs.toArray(new String[0]);
+        if (!langs.contains("ja")) langs.add("ja");
+        return langs.toArray(new String[0]);
+    }
+
+    private void pickLang() {
+        String[] items = langList();
         Ui.choose(this, "Language", items, -1, i -> { app.setLang(items[i]); show(); });
+    }
+
+    /** The ‹ › beside the language name: the next / previous language of the list, on any page. */
+    private void stepLang(int dir) {
+        String[] items = langList();
+        int at = Arrays.asList(items).indexOf(app.lang());
+        app.setLang(items[((at < 0 ? 0 : at) + dir + items.length) % items.length]);
+        show();
     }
 
     private void sync() { sync(true); }
@@ -578,6 +592,8 @@ public final class MainActivity extends Activity {
         if (app.pc() == null)
             Kit.add(l, Kit.actionCard(this, "Link the PC", "Exchange words, cards and where you stopped with Glossa on the PC.", "Link", v -> toSettings()));
         Kit.add(l, Kit.actionCard(this, "Look up a sentence", "Type or paste a sentence and tap a word.", null, v -> Lookup.open(this, null)));
+        if (app.pc() != null)
+            Kit.add(l, Kit.actionCard(this, "Quiz me ✨", "A short quiz on words you mined lately, written by the AI on the PC.", null, v -> Ai.quiz(this, app.lang(), null)));
 
         // 4. the blocks registered in Extras: today's rings, this week, review, words that keep coming up (and later ones)
         Extras.addHomeCards(this, l, 0, 1000);
@@ -973,6 +989,23 @@ public final class MainActivity extends Activity {
         Ui.add(l, acts, 8);
         String lang = app.lang();
         List<BookInfo> books = bookList(lang);
+        {   // Continue: the book touched last, as on Home; a tap on the card or on its cover opens it at once
+            BookInfo last = null; long lt = 0;
+            for (BookInfo bk : books) {
+                long t = app.prefs().getLong("rt_" + bk.id, 0);
+                if (t > lt && shelfOf(bk.id) == 0) { lt = t; last = bk; }
+            }
+            if (last != null) {
+                final BookInfo bk = last;
+                float frac = app.prefs().getFloat("rf_" + bk.id, 0);
+                int[] pos = Reader.position(bk.id);
+                View pic = bookCover(bk.id, bk.title, 92, 132);
+                pic.setOnClickListener(v -> openBook(bk));
+                Kit.add(l, Kit.heroSide(this, pic, "Continue reading", bk.title,
+                        "Chapter " + (pos[0] + 1) + " of " + bk.chapters + " · " + Math.round(frac * 100) + "%",
+                        Ui.ago(lt * (lt < 100000000000L ? 1000 : 1)), frac, v -> openBook(bk)));
+            }
+        }
         if (books.isEmpty()) l.addView(Ui.hint(this, "No " + lang.toUpperCase(Locale.ROOT) + " books yet. Add an EPUB or text file (or a whole folder of them) from the phone, or copy a book from the Reader on the PC."));
         else {
             List<String> bkeys = new ArrayList<>();
@@ -1311,6 +1344,20 @@ public final class MainActivity extends Activity {
         if (fs == null || fs.length == 0) {
             l.addView(Ui.hint(this, "No videos yet. “Add a video” takes a video from the phone together with its subtitle files (.srt / .vtt / .ass): choose them all in one go. “From the PC” copies an episode and its subtitles over Wi-Fi."));
         } else {
+            {   // Continue watching: the video touched last and not finished, as the big card of Home
+                File last = null; long lt = 0;
+                for (File f : fs) {
+                    long t = app.prefs().getLong("vpost_" + f.getName(), 0);
+                    if (t > lt && app.prefs().getFloat("vpos_" + f.getName(), 0) >= 5 && !watched(f)) { lt = t; last = f; }
+                }
+                if (last != null) {
+                    final File f = last;
+                    float at = app.prefs().getFloat("vpos_" + f.getName(), 0), dur = app.prefs().getFloat("vdur_" + f.getName(), 0);
+                    String ep = vepisode(f).replace("Season ", "S").replace(" · Episode ", " · Ep ");
+                    String sub = (ep.isEmpty() ? "" : ep + " · ") + (dur > 30 ? Ui.time(Math.max(0, dur - at)) + " left" : "at " + Ui.time(at));
+                    Kit.add(l, Kit.heroWide(this, Thumbs.tile(this, f, vtitle(f), 0f), "Continue watching", vtitle(f), sub, dur > 30 ? at / dur : 0f, v -> openVideo(f)));
+                }
+            }
             Map<String, List<File>> groups = showGroups(fs);
             List<File> singles = new ArrayList<>();
             for (File f : fs) { Shows.Ep e = Player.epOf(f); if (e.show.isEmpty() || !groups.containsKey(Shows.key(e.show))) singles.add(f); }
@@ -2080,6 +2127,8 @@ public final class MainActivity extends Activity {
         Ui.pickRow(g, "Accent colour", acc.isEmpty() ? "The theme's own" : Ui.accentName(acc), v -> Pickers.accent(this, this::recreate));
         String ic = app.prefs().getString("icon", "original");
         Ui.pickRow(g, "App icon", "pc".equals(ic) ? "Same as the PC" : Icons.name(ic), v -> Pickers.icon(this, this::show));
+        Ui.switchRow(g, "Underline only", "The coloured words get a coloured line under them and no coloured background (the PC's “Underline only”).", app.prefs().getBoolean("ulonly", false),
+                (b, on) -> { app.prefs().edit().putBoolean("ulonly", on).apply(); Ui.ulOnly = on; });
         Ui.switchRow(g, "Coloured words", "Unknown, looked-up and card words coloured in videos and books, as on the PC. Kept for this language (" + app.lang().toUpperCase() + ") only; the text size of books too.", app.flag("colours", true),
                 (b, on) -> app.prefs().edit().putBoolean(app.lk("colours"), on).apply());
         Ui.add(l, g, 0);

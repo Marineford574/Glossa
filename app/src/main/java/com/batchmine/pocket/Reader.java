@@ -63,8 +63,8 @@ public final class Reader extends Activity {
     private android.widget.ImageView listenIcon;
     private final Map<String, Integer> unknown = new LinkedHashMap<>();   // this chapter's unknown words, most frequent first
 
-    private static final String[] FONT_KEYS = {"serif", "sans", "light", "condensed", "mono"};
-    private static final String[] FONT_NAMES = {"Serif (like a book)", "Sans-serif", "Sans-serif light", "Condensed", "Monospace"};
+    private static final String[] FONT_KEYS = {"serif", "sans", "light", "condensed", "mono", "medium", "black", "casual", "cursive", "smallcaps", "serifmono"};
+    private static final String[] FONT_NAMES = {"Serif (like a book)", "Sans-serif", "Sans-serif light", "Condensed", "Monospace", "Sans-serif medium", "Sans-serif black (heavy)", "Casual (handwritten)", "Cursive", "Small caps", "Typewriter serif"};
     private static final int[] PAGE_CHARS = {0, 1200, 2500, 5000};
     private static final String[] PAGE_NAMES = {"The whole chapter", "A little (about 1 200 characters)", "Some (about 2 500)", "A lot (about 5 000)"};
 
@@ -80,6 +80,12 @@ public final class Reader extends Activity {
             case "light": return android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL);
             case "condensed": return android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL);
             case "mono": return android.graphics.Typeface.MONOSPACE;
+            case "medium": return android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL);
+            case "black": return android.graphics.Typeface.create("sans-serif-black", android.graphics.Typeface.NORMAL);
+            case "casual": return android.graphics.Typeface.create("casual", android.graphics.Typeface.NORMAL);
+            case "cursive": return android.graphics.Typeface.create("cursive", android.graphics.Typeface.NORMAL);
+            case "smallcaps": return android.graphics.Typeface.create("sans-serif-smallcaps", android.graphics.Typeface.NORMAL);
+            case "serifmono": return android.graphics.Typeface.create("serif-monospace", android.graphics.Typeface.NORMAL);
             default: return android.graphics.Typeface.SERIF;
         }
     }
@@ -462,9 +468,18 @@ public final class Reader extends Activity {
             sp.edit().putBoolean(app.lk("colours"), on).apply();
             draw(true);
         });
+        Ui.switchRow(g2, "Underline only", "A coloured line under the words, no coloured background.", Ui.ulOnly, (b, on) -> {
+            Ui.ulOnly = on;
+            sp.edit().putBoolean("ulonly", on).apply();
+            draw(true);
+        });
         Ui.switchRow(g2, "Next › marks the rest as known", "Going to the next chapter adds its still-coloured words to your known words (the ones you looked up or made a card of stay). Undo appears for a while.",
                 sp.getBoolean("rd_pageknown", false), (b, on) -> sp.edit().putBoolean("rd_pageknown", on).apply());
         Ui.pickRow(g2, "Mark this chapter's words as known…", "", v -> chapterKnown());
+        Ui.pickRow(g2, "✨ What is this chapter about?", "The AI on the PC tells you, and lists the words to know. No spoilers.", v -> {
+            Ui.dismiss(opts[0]);
+            Ai.summary(this, lang(), android.text.TextUtils.join("\n", book.chapters.get(chapter).paras), false);
+        });
         l.addView(g2);
         l.addView(Ui.section(this, "Screen"));
         LinearLayout g3 = Ui.group(this);
@@ -607,7 +622,7 @@ public final class Reader extends Activity {
 
     @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) { Stopwatch.active(); return super.dispatchTouchEvent(e); }
 
-    @Override protected void onResume() { super.onResume(); Stopwatch.start("read", null); }
+    @Override protected void onResume() { super.onResume(); Stopwatch.start("read", book == null ? "" : "b:" + book.id, null); }
 
     @Override protected void onPause() { super.onPause(); Stopwatch.stop(); if (book != null && list != null) save(); }
 

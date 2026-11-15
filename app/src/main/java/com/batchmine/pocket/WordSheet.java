@@ -146,8 +146,12 @@ public final class WordSheet {
         senBox.addView(senT);
         senBox.addView(senE);
         senBox.addView(ctxRow);
+        final LinearLayout senAi = Ui.row(a);
+        senAi.setPadding(0, Ui.dp(a, 6), 0, 0);
+        senBox.addView(senAi);
         final boolean hasSentence = base != null && !base.sentence.isEmpty();
         if (hasSentence) box.addView(senBox);
+        Runnable[] lookup = {null};
         Runnable[] drawSen = {null};
         java.util.function.Supplier<String> sentence = () -> {
             if (edited[0] != null) return edited[0];
@@ -168,6 +172,7 @@ public final class WordSheet {
             }
             senT.setText(sp);
             ctxRow.removeAllViews();
+            senAi.removeAllViews();
             if (edited[0] != null) {
                 Button undo = Ui.button(a, "↺ original", v -> { edited[0] = null; senE.setVisibility(android.view.View.GONE); senT.setVisibility(android.view.View.VISIBLE); drawSen[0].run(); });
                 ctxRow.addView(undo);
@@ -188,6 +193,44 @@ public final class WordSheet {
             if (!base.before.isEmpty()) ctxRow.addView(b1);
             if (!base.after.isEmpty()) ctxRow.addView(b2);
             if (cb[0] + ca[0] > 0) ctxRow.addView(Ui.button(a, "only this", v -> { cb[0] = ca[0] = 0; drawSen[0].run(); }));
+            // the AI helpers (they run on the PC): grammar of the sentence, example sentences, and whether the ticked meaning fits
+            {
+                final String sen = t;
+                String[][] helpers = {{"Grammar", "grammar"}, {"Examples", "examples"}, {"Simpler", "simplify"}};
+                for (String[] hp : helpers) {
+                    Button ab = Ui.button(a, "✨ " + hp[0], v -> Ai.study(a, hp[0], hp[1], lang, wIn.getText().toString().trim(), sen, ""));
+                    ab.setMinWidth(0); ab.setTextSize(13); ab.setMinHeight(Ui.dp(a, 36)); ab.setMinimumHeight(Ui.dp(a, 36));
+                    ab.setBackground(Ui.press(Ui.mix(Ui.BG, Ui.TEXT, 0.13f), 0, Ui.dp(a, 10)));
+                    LinearLayout.LayoutParams al = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    al.rightMargin = Ui.dp(a, 6);
+                    ab.setLayoutParams(al);
+                    senAi.addView(ab);
+                }
+            }
+            // the word was cut wrongly: take a letter more or less at either end (the PC's "pick the word yourself")
+            if (k >= 0 && !wIn.getText().toString().trim().isEmpty()) {
+                final int at = k, len = wIn.getText().toString().trim().length();
+                String[] lab = {"◂+", "◂−", "−▸", "+▸"};
+                int[][] d2 = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+                for (int q = 0; q < 4; q++) {
+                    final int[] dd = d2[q];
+                    Button bq = Ui.button(a, lab[q], v -> {
+                        int ns = at + dd[0], ne = at + len + dd[1];
+                        if (ns < 0 || ne > t.length() || ne - ns < 1) return;
+                        wIn.setText(t.substring(ns, ne));
+                        wIn.setSelection(wIn.getText().length());
+                        lookup[0].run();
+                        drawSen[0].run();
+                    });
+                    bq.setMinWidth(0); bq.setTextSize(13); bq.setMinHeight(Ui.dp(a, 36)); bq.setMinimumHeight(Ui.dp(a, 36));
+                    bq.setBackground(Ui.press(Ui.mix(Ui.BG, Ui.TEXT, 0.13f), 0, Ui.dp(a, 10)));
+                    LinearLayout.LayoutParams ql = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    ql.leftMargin = Ui.dp(a, q == 0 ? 10 : 3);
+                    bq.setLayoutParams(ql);
+                    bq.setContentDescription(new String[]{"Take one more character before", "Drop the first character", "Drop the last character", "Take one more character after"}[q]);
+                    ctxRow.addView(bq);
+                }
+            }
         };
         senT.setOnClickListener(v -> {
             senE.setText(sentence.get());
@@ -375,7 +418,6 @@ public final class WordSheet {
         if (d.getWindow() != null) d.getWindow().getDecorView().setOnGenericMotionListener((v, e) -> Pad.motion(a, e, "word", padAct));
         d.show();
         d.setOnDismissListener(x -> { if (webF != null) try { webF.destroy(); } catch (RuntimeException ignored) { } if (closed != null) closed.run(); });
-        Runnable[] lookup = {null};
         lookup[0] = () -> {
             final String wd = wIn.getText().toString().trim();
             if (wd.isEmpty()) return;
@@ -503,7 +545,10 @@ public final class WordSheet {
           .append("summary{color:").append(Ui.hex(Ui.DIM)).append(";font-size:13px;cursor:pointer}details{margin:3px 0;font-size:13.5px}.none{color:").append(Ui.hex(Ui.DIM)).append(";margin-top:20px}")
           // the single meanings, each with its own tick box (the PC's .gpick): tap a meaning to put it on the card
           // the tick box sits in the line, in front of the meaning, as on the PC (floated, so a meaning made of blocks still flows beside it)
-          .append("input.gpick{float:left;width:16px;height:16px;margin:2px 8px 0 0;accent-color:").append(Ui.hex(Ui.ACCENT)).append("}")
+          // round tick boxes like the redesign: an empty ring, filled with the accent and a check when ticked
+          .append("input.gpick,input.pk,.dccw input{-webkit-appearance:none;appearance:none;float:left;width:20px;height:20px;margin:1px 10px 0 0;border-radius:50%;border:2px solid ").append(Ui.hex(Ui.mix(Ui.BG, Ui.TEXT, 0.4f))).append(";background:transparent;position:relative}")
+          .append("input.gpick:checked,input.pk:checked,.dccw input:checked{background:").append(Ui.hex(Ui.ACCENT)).append(";border-color:").append(Ui.hex(Ui.ACCENT)).append("}")
+          .append("input.gpick:checked::after,input.pk:checked::after,.dccw input:checked::after{content:'';position:absolute;left:5px;top:1px;width:5px;height:10px;border:solid ").append(Ui.hex(Ui.ON_ACC)).append(";border-width:0 2px 2px 0;transform:rotate(45deg)}")
           .append("li.gli::after{content:'';display:block;clear:both}li.gli>div:first-of-type,li.gli>span:first-of-type{display:inline}")
           .append("li.gli{border-radius:7px;padding:2px 4px;margin:1px -4px}li.gli.picked{background:").append(Ui.hex(Ui.mix(Ui.CARD, Ui.ACCENT, 0.2f))).append("}")
           .append(".padrow{outline:2px solid ").append(Ui.hex(Ui.ACCENT)).append(";outline-offset:1px;border-radius:7px;background:").append(Ui.hex(Ui.mix(Ui.CARD, Ui.ACCENT, 0.18f))).append("}")

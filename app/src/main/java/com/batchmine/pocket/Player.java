@@ -50,7 +50,12 @@ public final class Player extends Activity {
     private int pausedAt = -2;
     private TextView speedLbl, statusText;
     private android.widget.ImageView playIcon, markBtn, fsIcon;
-    private Timeline tl;
+    private Timeline tl, tl2;
+    // the portrait look of the new design: slim progress with the times, round buttons, quick switches, the lines as a panel
+    private LinearLayout pck, linesHead;
+    private TextView tLeft, tRight, speedChip2, pillTr, pillAuto, pillLoop, newInView;
+    private android.widget.ImageView playIcon2, tbMenu, tbCc, tbFs;
+    private boolean loopOn;
     private LinearLayout topBar;
     private boolean hideSub, hideTr, uiOn = true;
     private long lastTouch = System.currentTimeMillis();
@@ -265,6 +270,13 @@ public final class Player extends Activity {
         markBtn = barIcon(R.drawable.ic_pl_star_o, "Mark the line for a card");
         markBtn.setOnClickListener(v -> action("mark"));
         topBar.addView(markBtn, new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44)));
+        tbCc = barIcon(R.drawable.ic_pl_cc, "Subtitles");
+        tbCc.setOnClickListener(v -> action("subs"));
+        tbMenu = barIcon(R.drawable.ic_pl_menu, "Menu");
+        tbMenu.setOnClickListener(v -> action("menu"));
+        tbFs = barIcon(R.drawable.ic_pl_fs, "Turn the picture");
+        tbFs.setOnClickListener(v -> action("rotate"));
+        for (android.widget.ImageView ic : new android.widget.ImageView[]{tbCc, tbMenu, tbFs}) { ic.setVisibility(View.GONE); topBar.addView(ic, new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44))); }
         root.addView(topBar, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
         // ---- the controls: one row of the PC's icons above the timeline strip (uosc)
         ctl = Ui.col(this);
@@ -318,17 +330,20 @@ public final class Player extends Activity {
         prev.setBackground(Ui.round(0xFF000000, Ui.dp(this, 8)));
         prev.setClipToOutline(true);
         prev.setVisibility(View.GONE);
+        buildPocketControls();
         root.addView(ctl, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
         root.addView(prev, new FrameLayout.LayoutParams(Ui.dp(this, 176), Ui.dp(this, 99), Gravity.BOTTOM | Gravity.START));
+        pck.addOnLayoutChangeListener((vw, l, t, r, b, ol, ot, orr, ob) -> {
+            if (!stacked) return;
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) listView.getLayoutParams();
+            if (lp.topMargin != b) { lp.topMargin = b; listView.setLayoutParams(lp); }
+        });
         // the subtitles sit just above the controls, whatever the height of those is (taller on a phone held upright)
         ctl.addOnLayoutChangeListener((vw, l, t, r, b, ol, ot, orr, ob) -> {
             if (!uiOn && !stacked) return;
+            if (stacked) return;
             int want = (b - t) + Ui.dp(this, 6);
             if (subs.getPaddingBottom() != want) subs.setPadding(subs.getPaddingLeft(), 0, subs.getPaddingRight(), want);
-            if (stacked) {                                   // the list starts right under the controls
-                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) listView.getLayoutParams();
-                if (lp.topMargin != b) { lp.topMargin = b; listView.setLayoutParams(lp); }
-            }
         });
 
         setContentView(root);
@@ -337,7 +352,7 @@ public final class Player extends Activity {
         speed = app.prefs().getFloat(lk("speed"), app.prefs().getFloat("speed", 1f));
         pmode = app.prefs().getString(lk("pmode"), app.prefs().getString("pmode", app.prefs().getBoolean("prime", false) ? "primed" : "normal"));
         prime = "primed".equals(pmode);
-        speedLbl.setText(speedLabel(speed));
+        speedLbl.setText(speedLabel(speed)); if (speedChip2 != null) speedChip2.setText(speedLabel(speed));
         loadSubs();
         video.setVideoURI(videoUri(file));
         video.setOnPreparedListener(mp -> {
@@ -354,6 +369,131 @@ public final class Player extends Activity {
         queue = getIntent().getStringArrayExtra("queue");
         video.setOnCompletionListener(mp -> finishVideo());
         video.setOnErrorListener((mp, w, e) -> { Ui.alert(this, "Cannot play this video", "The phone could not play " + file.getName() + (file.getName().endsWith(".vlink") ? " (if you moved or deleted the video, add it again)" : "") + ". MP4 (H.264) works everywhere; other formats depend on the phone."); return true; });
+    }
+
+    private int panelColor() { return Ui.mix(Ui.BG, Ui.CARD, 0.6f); }
+
+    private String left(int ms, int dur) { return "\u2212" + Ui.time(Math.max(0, dur - ms) / 1000.0); }
+
+    private void timesText(int ms) {
+        if (tLeft == null) return;
+        int dur = Math.max(1, video.getDuration());
+        tLeft.setText(Ui.time(ms / 1000.0));
+        tRight.setText(left(ms, dur));
+    }
+
+    private android.widget.ImageView roundBtn(int res, String what, int size, int bg, int fg, Runnable r) {
+        android.widget.ImageView iv = Ui.icon(this, res, size >= 60 ? 28 : 22, fg);
+        int pad = Ui.dp(this, size >= 60 ? 17 : 13);
+        iv.setPadding(pad, pad, pad, pad);
+        iv.setBackground(Ui.press(bg, 0, Ui.dp(this, 99)));
+        iv.setContentDescription(what);
+        iv.setOnClickListener(v -> r.run());
+        return iv;
+    }
+
+    private TextView quickPill(String label, Runnable tap, Runnable hold) {
+        TextView t = Ui.text(this, label, 13, Ui.TEXT);
+        t.setGravity(Gravity.CENTER);
+        t.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+        t.setOnClickListener(v -> tap.run());
+        if (hold != null) t.setOnLongClickListener(v -> { hold.run(); return true; });
+        return t;
+    }
+
+    /** The three quick switches look on or off like the new design's: soft accent when on, plain when off. */
+    private void pillsUpdate() {
+        if (pillTr == null) return;
+        int onBg = Ui.mix(Ui.BG, Ui.ACCENT, 0.28f);
+        TextView[] ps = {pillTr, pillAuto, pillLoop};
+        boolean[] on = {!hideTr, "pi1".equals(pmode) || "punk".equals(pmode), loopOn && loopUntil > 0};
+        for (int i = 0; i < 3; i++) {
+            ps[i].setBackground(Ui.round(on[i] ? onBg : Ui.CARD, Ui.dp(this, 12)));
+            ps[i].setTextColor(on[i] ? Ui.mix(Ui.TEXT, Ui.ACCENT, 0.55f) : Ui.mix(Ui.TEXT, Ui.BG, 0.2f));
+        }
+    }
+
+    /** The portrait controls of the new design: the thin progress bar with both times, five round buttons (the big one blue), three switches,
+     *  and the head of the lines panel. Every feature of the old row is still there: ⋮ (menu), CC and the turn button are in the top bar. */
+    private void buildPocketControls() {
+        pck = Ui.col(this);
+        pck.setBackgroundColor(Ui.BG);
+        pck.setPadding(Ui.dp(this, 16), Ui.dp(this, 6), Ui.dp(this, 16), 0);
+        tl2 = new Timeline(this).slim(ms -> { if (tl2 != null && tl2.dragging()) timesText(ms); });
+        tl2.onSeek(ms -> { dragging = false; video.seekTo(ms); shown = -2; primeLine = -1; primePhase = ""; loopUntil = -1; }, () -> dragging = true);
+        tl2.onScrub(this::scrub);
+        pck.addView(tl2, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 28)));
+        LinearLayout times = Ui.row(this);
+        tLeft = Ui.text(this, "0:00", 12, Ui.DIM);
+        tRight = Ui.text(this, "\u22120:00", 12, Ui.DIM);
+        times.addView(tLeft, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        times.addView(tRight);
+        pck.addView(times);
+        LinearLayout br = Ui.row(this);
+        br.setGravity(Gravity.CENTER);
+        br.setPadding(0, Ui.dp(this, 8), 0, Ui.dp(this, 6));
+        int soft = Ui.mix(Ui.BG, Ui.TEXT, 0.09f);
+        LinearLayout.LayoutParams sm = new LinearLayout.LayoutParams(Ui.dp(this, 48), Ui.dp(this, 48));
+        sm.leftMargin = sm.rightMargin = Ui.dp(this, 7);
+        LinearLayout.LayoutParams big = new LinearLayout.LayoutParams(Ui.dp(this, 64), Ui.dp(this, 64));
+        big.leftMargin = big.rightMargin = Ui.dp(this, 7);
+        br.addView(roundBtn(R.drawable.ic_pl_prev, "Previous line", 48, soft, Ui.TEXT, () -> action("prev")), sm);
+        br.addView(roundBtn(R.drawable.ic_pl_replay, "Say this line again", 48, soft, Ui.TEXT, () -> action("repeat")), sm);
+        playIcon2 = roundBtn(R.drawable.ic_pl_play, "Play / pause", 64, Ui.ACCENT, Ui.ON_ACC, () -> action("play"));
+        br.addView(playIcon2, big);
+        br.addView(roundBtn(R.drawable.ic_pl_next, "Next line", 48, soft, Ui.TEXT, () -> action("next")), sm);
+        speedChip2 = Ui.text(this, "1×", 13, Ui.TEXT);
+        speedChip2.setGravity(Gravity.CENTER);
+        speedChip2.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        speedChip2.setBackground(Ui.press(soft, 0, Ui.dp(this, 99)));
+        speedChip2.setContentDescription("Speed");
+        speedChip2.setOnClickListener(v -> action("speed"));
+        br.addView(speedChip2, sm);
+        pck.addView(br);
+        LinearLayout pills = Ui.row(this);
+        pills.setPadding(0, Ui.dp(this, 2), 0, Ui.dp(this, 10));
+        pillTr = quickPill("Translation", () -> { hideTr = !hideTr; if (adapter != null) adapter.notifyDataSetChanged(); shown = -2; pillsUpdate(); }, null);
+        pillAuto = quickPill("Auto-pause", () -> { setMode("pi1".equals(pmode) ? "normal" : "pi1"); pillsUpdate(); }, this::modeMenu);
+        pillLoop = quickPill("Loop line", () -> {
+            if (loopOn && loopUntil > 0) { loopOn = false; loopUntil = -1; }
+            else { action("repeat"); loopOn = loopUntil > 0; if (loopOn) loopLeft = 0; }
+            pillsUpdate();
+        }, () -> action("quick"));
+        TextView[] ps = {pillTr, pillAuto, pillLoop};
+        for (int i = 0; i < 3; i++) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, Ui.dp(this, 40), 1f);
+            if (i > 0) lp.leftMargin = Ui.dp(this, 8);
+            pills.addView(ps[i], lp);
+        }
+        pck.addView(pills);
+        linesHead = Ui.row(this);
+        linesHead.setGravity(Gravity.CENTER_VERTICAL);
+        android.graphics.drawable.GradientDrawable topRound = Ui.round(panelColor(), 0);
+        float rr = Ui.dp(this, 20);
+        topRound.setCornerRadii(new float[]{rr, rr, rr, rr, 0, 0, 0, 0});
+        linesHead.setBackground(topRound);
+        linesHead.setPadding(Ui.dp(this, 16), Ui.dp(this, 14), Ui.dp(this, 16), Ui.dp(this, 6));
+        TextView lh = Ui.text(this, "Lines", 15, Ui.TEXT);
+        lh.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+        lh.setOnClickListener(v -> action("lines"));
+        linesHead.addView(lh, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        newInView = Ui.text(this, "", 12, Ui.DIM);
+        linesHead.addView(newInView);
+        LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hl.leftMargin = hl.rightMargin = -Ui.dp(this, 16);
+        pck.addView(linesHead, hl);
+        FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
+        root.addView(pck, fl);
+        pck.setVisibility(View.GONE);
+        pillsUpdate();
+    }
+
+    /** "3 new words in view": the words you don't know in the lines around the one being said. */
+    private void newWordsText() {
+        if (newInView == null || !stacked) return;
+        int n = 0, from = Math.max(0, curLine - 1), to = Math.min(main.size() - 1, curLine + 4);
+        for (int i = from; i <= to; i++) { Integer u = unkN.get(i); if (u != null) n += u; }
+        newInView.setText(unkN.isEmpty() ? "" : n + (n == 1 ? " new word in view" : " new words in view"));
     }
 
     private void loadSubs() {
@@ -410,8 +550,16 @@ public final class Player extends Activity {
             ctl.setBackgroundColor(0xFF000000);
             ctl.setPadding(0, 0, 0, 0);
             FrameLayout.LayoutParams ll = (FrameLayout.LayoutParams) listView.getLayoutParams();
-            ll.topMargin = vb.height + Ui.dp(this, 96);
-            uiOn = true; topBar.setVisibility(View.VISIBLE); ctl.setVisibility(View.VISIBLE);
+            ll.topMargin = vb.height + Math.max(pck.getHeight(), Ui.dp(this, 300));
+            FrameLayout.LayoutParams pl = (FrameLayout.LayoutParams) pck.getLayoutParams();
+            pl.gravity = Gravity.TOP; pl.topMargin = vb.height;
+            pck.setLayoutParams(pl);
+            pck.setVisibility(View.VISIBLE);
+            ctl.setVisibility(View.GONE);
+            listView.setBackgroundColor(panelColor());
+            listView.setPadding(Ui.dp(this, 8), 0, Ui.dp(this, 8), Ui.dp(this, 8));
+            listView.setClipToPadding(false);
+            uiOn = true; topBar.setVisibility(View.VISIBLE);
             listView.setLayoutParams(ll);
             listView.setVisibility(View.VISIBLE);
             subsBox.setVisibility(View.GONE);
@@ -421,9 +569,13 @@ public final class Player extends Activity {
             cl.gravity = Gravity.BOTTOM; cl.topMargin = 0;
             ctl.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP, new int[]{0xAA000000, 0x00000000}));
             ctl.setPadding(0, Ui.dp(this, 18), 0, 0);
+            ctl.setVisibility(uiOn ? View.VISIBLE : View.INVISIBLE);
+            pck.setVisibility(View.GONE);
             listView.setVisibility(View.GONE);
             subsBox.setVisibility(View.VISIBLE);
         }
+        int vis = stacked ? View.VISIBLE : View.GONE;
+        tbCc.setVisibility(vis); tbMenu.setVisibility(vis); tbFs.setVisibility(vis);
         if (fsIcon != null) fsIcon.setImageResource(port ? R.drawable.ic_pl_fs : R.drawable.ic_pl_fs_exit);
         videoBox.setLayoutParams(vb);
         ctl.setLayoutParams(cl);
@@ -442,7 +594,7 @@ public final class Player extends Activity {
             TextView time, tx, tr;
             if (v == null) {
                 row = Ui.col(Player.this);
-                row.setPadding(Ui.dp(Player.this, 14), Ui.dp(Player.this, 9), Ui.dp(Player.this, 14), Ui.dp(Player.this, 9));
+                row.setPadding(Ui.dp(Player.this, 12), Ui.dp(Player.this, 10), Ui.dp(Player.this, 12), Ui.dp(Player.this, 10));
                 time = Ui.text(Player.this, "", 11, Ui.DIM);
                 tx = Ui.text(Player.this, "", listSp, Ui.TEXT);
                 tx.setMovementMethod(LinkMovementMethod.getInstance());
@@ -457,8 +609,10 @@ public final class Player extends Activity {
             boolean cur = pos == curLine;
             boolean masked = pos >= lastLine && !modeShows(pos);
             boolean primed = cur && prime && pos == primeLine && ("read".equals(primePhase) || "listen".equals(primePhase));
-            row.setBackground(cur ? Ui.round(Ui.mix(Ui.CARD, Ui.ACCENT, 0.22f), Ui.dp(Player.this, Ui.RS)) : null);
-            time.setText((Marks.isMarked(file.getName(), c.start) ? "★ " : "") + Ui.time(c.start));
+            row.setBackground(cur ? Ui.round(Ui.mix(Ui.CARD, Ui.ACCENT, 0.16f), Ui.dp(Player.this, Ui.RS)) : null);
+            boolean marked = Marks.isMarked(file.getName(), c.start);
+            time.setVisibility(cur || marked ? View.VISIBLE : View.GONE);
+            time.setText((marked ? "★ " : "") + Ui.time(c.start));
             time.setTextColor(cur ? Ui.ACCENT : Ui.DIM);
             tx.setTextSize(listSp);
             tx.setTextColor(cur ? Ui.TEXT : Ui.mix(Ui.BG, Ui.TEXT, 0.75f));
@@ -498,6 +652,7 @@ public final class Player extends Activity {
     private void followLine(int i) {
         curLine = i;
         adapter.notifyDataSetChanged();
+        newWordsText();
         if (i >= 0 && System.currentTimeMillis() - userScrolled > 5000) listView.smoothScrollToPositionFromTop(i, Math.max(0, listView.getHeight() / 4), 250);
     }
 
@@ -544,7 +699,7 @@ public final class Player extends Activity {
 
     /** Does the mode need to know how many unknown words the lines have? */
     private boolean needsCounts() {
-        return "i1".equals(pmode) || "pi1".equals(pmode) || "punk".equals(pmode) || (prime && "unk".equals(app.prefs().getString(lk("prime_when"), app.prefs().getString("prime_when", "all"))));
+        return stacked || "i1".equals(pmode) || "pi1".equals(pmode) || "punk".equals(pmode) || (prime && "unk".equals(app.prefs().getString(lk("prime_when"), app.prefs().getString("prime_when", "all"))));
     }
 
     /** Works out, off the screen's thread, how many unknown words the next lines have (the dictionary is on disk). */
@@ -564,7 +719,7 @@ public final class Player extends Activity {
                 unkN.put(k, n);
                 got = true;
             }
-            if (got) app.post(() -> { if (!isFinishing()) { shown = -2; if (stacked) adapter.notifyDataSetChanged(); } });
+            if (got) app.post(() -> { if (!isFinishing()) { shown = -2; if (stacked) adapter.notifyDataSetChanged(); newWordsText(); } });
         });
     }
 
@@ -758,7 +913,7 @@ public final class Player extends Activity {
     private void setSpeed(float v) {
         speed = Math.max(0.25f, Math.min(4f, v));
         app.prefs().edit().putFloat(lk("speed"), speed).apply();
-        speedLbl.setText(speedLabel(speed));
+        speedLbl.setText(speedLabel(speed)); if (speedChip2 != null) speedChip2.setText(speedLabel(speed));
         applySpeed();
     }
 
@@ -1099,10 +1254,13 @@ public final class Player extends Activity {
     private void scrub(int ms) {
         scrubWant = ms;
         if (ms < 0) { prev.setVisibility(View.GONE); return; }
-        int w = Math.max(1, tl.getWidth()), dur = Math.max(1, video.getDuration());
+        Timeline vis = stacked ? tl2 : tl;
+        int w = Math.max(1, vis.getWidth()), dur = Math.max(1, video.getDuration());
         float x = (float) ms / dur * w - prev.getLayoutParams().width / 2f;
         prev.setTranslationX(Math.max(0, Math.min(w - prev.getLayoutParams().width, x)));
-        ((FrameLayout.LayoutParams) prev.getLayoutParams()).bottomMargin = ctl.getHeight() + Ui.dp(this, 8);
+        FrameLayout.LayoutParams pvl = (FrameLayout.LayoutParams) prev.getLayoutParams();
+        if (stacked) { pvl.gravity = Gravity.TOP | Gravity.START; pvl.topMargin = Math.max(Ui.dp(this, 8), videoBox.getLayoutParams().height - prev.getLayoutParams().height - Ui.dp(this, 8)); pvl.bottomMargin = 0; }
+        else { pvl.gravity = Gravity.BOTTOM | Gravity.START; pvl.topMargin = 0; pvl.bottomMargin = ctl.getHeight() + Ui.dp(this, 8); }
         prev.requestLayout();
         prev.setVisibility(View.VISIBLE);
         scrubEx.execute(() -> {
@@ -1252,12 +1410,15 @@ public final class Player extends Activity {
             double t = pos / 1000.0;
             playState(video.isPlaying(), pos);
             tl.set(pos, video.getDuration());
+            tl2.set(pos, video.getDuration());
+            if (!tl2.dragging()) timesText(pos);
             statusUpdate();
             if (!stacked) {                                          // the controls go when the video plays and nobody touches the screen (the PC hides them too)
                 if (!video.isPlaying() || "read".equals(primePhase)) { if (!uiOn) setUi(true); }
                 else if (uiOn && System.currentTimeMillis() - lastTouch > 3500) setUi(false);
             }
             if (playIcon != null) playIcon.setImageResource(video.isPlaying() ? R.drawable.ic_pl_pause : R.drawable.ic_pl_play);
+            if (playIcon2 != null) playIcon2.setImageResource(video.isPlaying() ? R.drawable.ic_pl_pause : R.drawable.ic_pl_play);
             if (loopUntil > 0 && t >= loopUntil) {
                 if (loopLeft == 0 || --loopLeft > 0) video.seekTo((int) (Math.max(0, loopFrom) * 1000));
                 else loopUntil = -1;                           // played as often as asked: on with the film
@@ -1599,7 +1760,7 @@ public final class Player extends Activity {
     @Override public void onPictureInPictureModeChanged(boolean in, android.content.res.Configuration cfg) {
         super.onPictureInPictureModeChanged(in, cfg);
         inPip = in;
-        if (in) { topBar.setVisibility(View.GONE); ctl.setVisibility(View.GONE); statusText.setVisibility(View.GONE); if (listView != null) listView.setVisibility(View.GONE); }
+        if (in) { topBar.setVisibility(View.GONE); ctl.setVisibility(View.GONE); pck.setVisibility(View.GONE); statusText.setVisibility(View.GONE); if (listView != null) listView.setVisibility(View.GONE); }
         else { topBar.setVisibility(View.VISIBLE); ctl.setVisibility(View.VISIBLE); uiOn = true; arrange(); }
     }
 
@@ -1663,7 +1824,7 @@ public final class Player extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        Stopwatch.start("watch", () -> video != null && video.isPlaying());     // counts while the video plays, and for a while after a touch
+        Stopwatch.start("watch", file == null ? "" : "v:" + file.getName(), () -> video != null && video.isPlaying());     // counts while the video plays, and for a while after a touch
     }
 
     @Override protected void onPause() {

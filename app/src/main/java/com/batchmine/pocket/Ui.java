@@ -123,7 +123,11 @@ public final class Ui {
     }
 
     /** The PC's word colours ("cards" mode): background and underline per state. */
+    /** "Underline only": the words keep their coloured line but no coloured background (read from the settings at start and when changed). */
+    public static boolean ulOnly;
+
     public static int stateBg(String s) {
+        if (ulOnly) return 0;
         switch (s) {
             case "u": return 0x33F5C211;
             case "e": return 0x33FF9F43;

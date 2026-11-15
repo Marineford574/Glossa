@@ -43,6 +43,17 @@ The logic (dictionary import and lookup, word colours, subtitles, EPUB, sync, th
 - A dictionary zip with a damaged checksum (the NHK file I tested has one) is refused: download it again.
 
 - Stopwatch: the Reader and the Player bars show today's reading / watching time as a small clock (⏱ 12:34); tap it to pause and resume. The time still counts by itself while a video plays or you touch the screen, and goes to the PC at each sync.
+- Stopwatch: hold the clock to set today's time or reset it. (The PC adds the phone's seconds at a sync, so lowering it here does not lower the PC's total.)
+- Language: ‹ › beside the language name on every page step through the languages; the name still opens the list (Japanese included).
+- Read page: a Continue card for the book read last; tapping it or its cover opens the book.
+- Underline only (Settings, and Reader options): coloured line under words, no coloured background.
+- Fonts: eleven for books (medium, black, casual, cursive, small caps, typewriter serif added).
+- Wrong word cut? In the word sheet, under the sentence: ◂+ ◂− −▸ +▸ take a character more or less at either end and look the new word up.
+- Player portrait layout: video on top, slim timeline and controls below, like the redesign. Parse-checked only: never run on a phone.
+- Stopwatch per video / book: the clock shows the time on the video or book open now; hold it to see today's total, set either, or reset. (Kept per file name on the phone; not sent to the PC.)
+- AI helpers (need the PC linked, its Claude key or Ollama): ✨ Grammar / Examples / Simpler under the sentence in the word sheet; Reader options → “What is this chapter about?”; Home → “Quiz me” (a multiple-choice quiz of words mined lately).
+- Round tick boxes in the word sheet; Watch page has a Continue watching card.
+- Japanese: Yomitan zips of 国語 dictionaries (新明解, 大辞林, デイリーコンサイス), Kanjium pitch accents and the Anime & Jdrama frequency list import like any other dictionary. Not tried with those exact files on a phone.
 
 ## Limits
 

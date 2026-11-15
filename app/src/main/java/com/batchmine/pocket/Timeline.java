@@ -16,11 +16,16 @@ final class Timeline extends View {
     private Seek seek;
     private Runnable onDragStart;
     private Seek scrub;                                         // while the finger is down: the time under it (ms), -1 when it lifts
+    private boolean slim;                                       // the thin blue bar of the new player (times are drawn beside it by the player)
+    private java.util.function.IntConsumer shownTo;
 
     Timeline(Context c) {
         super(c);
         setContentDescription("Position");
     }
+
+    /** The thin bar of the phone player's new look: a rounded grey track, the blue part played, a dot while the finger is on it. */
+    Timeline slim(java.util.function.IntConsumer shown) { slim = true; shownTo = shown; return this; }
 
     void onSeek(Seek s, Runnable start) { seek = s; onDragStart = start; }
     void onScrub(Seek s) { scrub = s; }
@@ -57,6 +62,18 @@ final class Timeline extends View {
         int shown = dragX >= 0 ? at(dragX) : pos;
         float x = w * shown / (float) max;
         p.setStyle(Paint.Style.FILL);
+        if (slim) {
+            float th = 4 * d, cy = h / 2, pad = 2 * d;
+            p.setShadowLayer(0, 0, 0, 0);
+            p.setColor(0xFF2A2D37);
+            c.drawRoundRect(pad, cy - th / 2, w - pad, cy + th / 2, th / 2, th / 2, p);
+            p.setColor(Ui.ACCENT);
+            float xe = Math.max(pad, Math.min(w - pad, x));
+            c.drawRoundRect(pad, cy - th / 2, xe, cy + th / 2, th / 2, th / 2, p);
+            if (dragX >= 0) c.drawCircle(xe, cy, 7 * d, p);
+            if (shownTo != null) shownTo.accept(shown);
+            return;
+        }
         p.setColor(0xDB000000);
         c.drawRect(0, 0, w, h, p);
         p.setColor(0x24FFFFFF);

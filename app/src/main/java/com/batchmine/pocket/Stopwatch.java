@@ -24,6 +24,7 @@ final class Stopwatch {
 
     private static final Handler H = new Handler(Looper.getMainLooper());
     private static String kind;                        // "watch" / "read" while one runs
+    private static String item = "";                   // the video ("v:<file name>") or book ("b:<id>") open now: its own time is kept too
     private static boolean paused;                     // paused by a tap on the clock in the bar (until the screen is left)
     private static Busy busy;
     private static long lastActive;
@@ -34,7 +35,7 @@ final class Stopwatch {
             long now = System.currentTimeMillis();
             int idle = App.get().prefs().getInt("watch".equals(kind) ? "sw_idle_watch" : "sw_idle_read", "watch".equals(kind) ? 20 : 90);
             boolean on = (busy != null && busy.now()) || idle <= 0 || now - lastActive <= idle * 1000L;
-            if (on && !paused) { add(kind, 1); }
+            if (on && !paused) { add(kind, 1); if (!item.isEmpty()) addItem(item, 1); }
             H.postDelayed(this, 1000);
         }
     };
@@ -49,6 +50,16 @@ final class Stopwatch {
         sp.edit().putInt(key, sp.getInt(key, 0) + s).apply();
     }
 
+    static int itemSeconds(String key) { return key == null || key.isEmpty() ? 0 : App.get().prefs().getInt("swi_" + key, 0); }
+
+    private static void addItem(String key, int s) {
+        SharedPreferences sp = App.get().prefs();
+        sp.edit().putInt("swi_" + key, sp.getInt("swi_" + key, 0) + s).apply();
+    }
+
+    /** The same, for the video or book ITEM ("v:<file>" / "b:<id>"). */
+    static void start(String k, String itemKey, Busy b) { start(k, b); item = itemKey == null ? "" : itemKey; }
+
     /** A screen where the time counts (Player: "watch", Reader: "read") came to the front. BUSY says "counts without a touch" (a video playing). */
     static void start(String k, Busy b) {
         stop();
@@ -58,7 +69,7 @@ final class Stopwatch {
 
     static void stop() {
         H.removeCallbacks(TICK);
-        kind = null; busy = null;
+        kind = null; busy = null; item = "";
     }
 
     /** 12:34, or 1:02:03 from an hour on. */
@@ -77,7 +88,7 @@ final class Stopwatch {
         final Runnable[] r = new Runnable[1];
         r[0] = new Runnable() {
             @Override public void run() {
-                t.setText((paused ? "⏸ " : "⏱ ") + clock(seconds(day(System.currentTimeMillis()), k)));
+                t.setText((paused ? "⏸ " : "⏱ ") + clock(item.isEmpty() ? seconds(day(System.currentTimeMillis()), k) : itemSeconds(item)));
                 H.removeCallbacks(this);
                 if (t.isAttachedToWindow()) H.postDelayed(this, 1000);
             }
@@ -87,9 +98,55 @@ final class Stopwatch {
             @Override public void onViewDetachedFromWindow(android.view.View v) { H.removeCallbacks(r[0]); }
         });
         t.setOnClickListener(v -> { paused = !paused; r[0].run(); Ui.toast(c, paused ? "Stopwatch paused: tap again to go on" : "Stopwatch running"); });
-        t.setContentDescription("Time today (" + ("watch".equals(k) ? "watching" : "reading") + "): tap to pause or resume");
+        t.setOnLongClickListener(v -> { editMenu(c, k, () -> r[0].run()); return true; });
+        t.setContentDescription("Time on this " + ("watch".equals(k) ? "video" : "book") + ": tap to pause or resume, hold for today's total, to edit or reset");
         r[0].run();
         return t;
+    }
+
+    /** "12:34", "1:02:03" or plain minutes ("45") to seconds; -1 when it is none of these. */
+    static int parse(String s) {
+        s = s.trim();
+        if (s.isEmpty()) return -1;
+        try {
+            String[] p = s.split(":");
+            if (p.length == 1) return Integer.parseInt(p[0].trim()) * 60;
+            if (p.length == 2) return Integer.parseInt(p[0].trim()) * 60 + Integer.parseInt(p[1].trim());
+            if (p.length == 3) return Integer.parseInt(p[0].trim()) * 3600 + Integer.parseInt(p[1].trim()) * 60 + Integer.parseInt(p[2].trim());
+        } catch (NumberFormatException e) { return -1; }
+        return -1;
+    }
+
+    /** Long press on the clock: change today's time (it goes to the PC at the next sync as set) or start it again from zero. */
+    static void editMenu(android.content.Context c, String k, Runnable done) {
+        final String today = day(System.currentTimeMillis());
+        final String dayKey = "sw_" + today + "_" + k;
+        final String it = item;
+        final String what = "watch".equals(k) ? "this video" : "this book";
+        String title = (it.isEmpty() ? "" : "On " + what + ": " + clock(itemSeconds(it)) + "\n") + ("watch".equals(k) ? "Watching" : "Reading") + " today: " + clock(seconds(today, k));
+        String[] opts = it.isEmpty() ? new String[]{"Set today's time…", "Reset today to 0:00"}
+                : new String[]{"Set the time on " + what + "…", "Reset " + what + " to 0:00", "Set today's time…", "Reset today to 0:00"};
+        Ui.choose(c, title, opts, -1, i -> {
+            boolean onItem = !it.isEmpty() && i < 2;
+            boolean reset = it.isEmpty() ? i == 1 : (i == 1 || i == 3);
+            String key = onItem ? "swi_" + it : dayKey;
+            int cur = onItem ? itemSeconds(it) : seconds(today, k);
+            String name = onItem ? what : "today";
+            if (reset) {
+                Ui.dialog(c).setTitle("Reset " + name + "?").setMessage("The time of " + name + " goes back to 0:00.")
+                        .setPositiveButton("Reset", (d, w) -> { App.get().prefs().edit().putInt(key, 0).apply(); done.run(); })
+                        .setNegativeButton("Cancel", null).show();
+                return;
+            }
+            android.widget.EditText in = Ui.input(c, clock(cur), "m:ss or h:mm:ss");
+            Ui.dialog(c).setTitle("Time on " + name).setMessage("Minutes (45), m:ss (12:30) or h:mm:ss (1:02:03).").setView(in)
+                    .setPositiveButton("Set", (d, w) -> {
+                        int v = parse(in.getText().toString());
+                        if (v < 0) { Ui.toast(c, "That is not a time"); return; }
+                        App.get().prefs().edit().putInt(key, v).apply();
+                        done.run();
+                    }).setNegativeButton("Cancel", null).show();
+        });
     }
 
     /** Something happened on screen (a touch). */
