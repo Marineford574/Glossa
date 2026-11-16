@@ -58,6 +58,9 @@ public final class Player extends Activity {
     private boolean loopOn;
     private LinearLayout topBar;
     private boolean hideSub, hideTr, uiOn = true;
+    /** What the subtitles show: "both" (the line and its translation), "tl" (only the language you learn), "tr" (only the translation). */
+    private String subView = "both";
+    private String thirdFn = "mark";                       // what the third quick button does: mark / slow / loop / pi1
     private long lastTouch = System.currentTimeMillis();
     // ---- the portrait layout: video on top, the lines of the subtitles scrolling below (Settings / the ⬒ button)
     private boolean stacked;
@@ -352,6 +355,9 @@ public final class Player extends Activity {
         speed = app.prefs().getFloat(lk("speed"), app.prefs().getFloat("speed", 1f));
         pmode = app.prefs().getString(lk("pmode"), app.prefs().getString("pmode", app.prefs().getBoolean("prime", false) ? "primed" : "normal"));
         prime = "primed".equals(pmode);
+        subView = app.prefs().getString(lk("subview"), "both");
+        thirdFn = app.prefs().getString("third_fn", "mark");
+        applySubView();
         speedLbl.setText(speedLabel(speed)); if (speedChip2 != null) speedChip2.setText(speedLabel(speed));
         loadSubs();
         video.setVideoURI(videoUri(file));
@@ -402,11 +408,85 @@ public final class Player extends Activity {
     }
 
     /** The three quick switches look on or off like the new design's: soft accent when on, plain when off. */
+    private void applySubView() { hideSub = "tr".equals(subView); hideTr = "tl".equals(subView); }
+
+    private void cycleSubView() {
+        subView = "both".equals(subView) ? "tl" : "tl".equals(subView) ? "tr" : "both";
+        app.prefs().edit().putString(lk("subview"), subView).apply();
+        applySubView();
+        shown = -2;
+        if (adapter != null) adapter.notifyDataSetChanged();
+        pillsUpdate();
+    }
+
+    private void subViewMenu() {
+        String[] keys = {"both", "tl", "tr"}, names = {"Text + translation", "Text only (the language you learn)", "Translation only"};
+        new android.app.AlertDialog.Builder(this).setTitle("Show").setSingleChoiceItems(names, java.util.Arrays.asList(keys).indexOf(subView), (d, w) -> {
+            subView = keys[w]; app.prefs().edit().putString(lk("subview"), subView).apply(); applySubView(); shown = -2;
+            if (adapter != null) adapter.notifyDataSetChanged(); pillsUpdate(); d.dismiss(); }).show();
+    }
+
+    /** The middle button: normal → primed listening → hidden → normal (any other mode goes to normal; long-press lists them all). */
+    private void cycleMode() { setMode("normal".equals(pmode) ? "primed" : "primed".equals(pmode) ? "hidden" : "normal"); pillsUpdate(); }
+
+    private static final String[] THIRD_KEYS = {"mark", "slow", "loop", "pi1"};
+    private static final String[] THIRD_NAMES = {"★ Mark line", "Slow down", "Loop line", "Stop at i+1"};
+    private static final String[] THIRD_HINTS = {"Keeps the line for a card (Home → Review)", "Toggles between normal speed and a slower one (Settings: 0,85× by default)", "Say the line again and again until you go on", "Pauses at the end of every line with exactly one new word"};
+
+    private void thirdTap() {
+        switch (thirdFn) {
+            case "slow": { float to = Math.abs(speed - 1f) < 0.01f ? app.prefs().getFloat("slow_to", 0.85f) : 1f; setSpeed(to); break; }
+            case "loop":
+                if (loopOn && loopUntil > 0) { loopOn = false; loopUntil = -1; }
+                else { action("repeat"); loopOn = loopUntil > 0; if (loopOn) loopLeft = 0; }
+                break;
+            case "pi1": setMode("pi1".equals(pmode) ? "normal" : "pi1"); break;
+            default: action("mark");
+        }
+        pillsUpdate();
+    }
+
+    private void thirdPick() {
+        LinearLayout l = Ui.col(this);
+        l.setPadding(Ui.dp(this, 6), 0, Ui.dp(this, 6), Ui.dp(this, 12));
+        android.app.Dialog[] d = new android.app.Dialog[1];
+        for (int i = 0; i < THIRD_KEYS.length; i++) {
+            final String k = THIRD_KEYS[i];
+            LinearLayout r = Ui.row(this);
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 10));
+            r.setBackground(Ui.press(0x00000000, 0x00000000, Ui.dp(this, Ui.RS)));
+            TextView ck = Ui.text(this, k.equals(thirdFn) ? "✓" : "", 15, Ui.ACCENT);
+            ck.setMinWidth(Ui.dp(this, 24));
+            r.addView(ck);
+            LinearLayout c = Ui.col(this);
+            TextView tt = Ui.text(this, THIRD_NAMES[i], 16, Ui.TEXT);
+            if (k.equals(thirdFn)) tt.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            c.addView(tt);
+            c.addView(Ui.text(this, THIRD_HINTS[i], 12, Ui.DIM));
+            r.addView(c, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            r.setOnClickListener(v -> { Ui.dismiss(d[0]); thirdFn = k; app.prefs().edit().putString("third_fn", k).apply(); pillsUpdate(); });
+            l.addView(r);
+        }
+        d[0] = Ui.sheet(this, "The third button", Ui.scroll(this, l), true);
+    }
+
     private void pillsUpdate() {
         if (pillTr == null) return;
         int onBg = Ui.mix(Ui.BG, Ui.ACCENT, 0.28f);
         TextView[] ps = {pillTr, pillAuto, pillLoop};
-        boolean[] on = {!hideTr, "pi1".equals(pmode) || "punk".equals(pmode), loopOn && loopUntil > 0};
+        pillTr.setText("tl".equals(subView) ? "Text only" : "tr".equals(subView) ? "Translation only" : "Text + translation");
+        pillAuto.setText("primed".equals(pmode) ? "Primed listening" : "hidden".equals(pmode) ? "Hidden" : "normal".equals(pmode) ? "Normal" : "Mode: " + modeName().toLowerCase(Locale.ROOT).replace("subtitles only ", "").replace("stop at ", "stop "));
+        boolean slow = Math.abs(speed - 1f) > 0.01f;
+        boolean marked = !main.isEmpty() && Marks.isMarked(file.getName(), main.get(Math.max(0, Math.min(main.size() - 1, curLine < 0 ? Math.max(0, lastLine) : curLine))).start);
+        switch (thirdFn) {
+            case "slow": pillLoop.setText(slow ? "Slow " + speedLabel(speed) : "Slow down"); break;
+            case "loop": pillLoop.setText("Loop line"); break;
+            case "pi1": pillLoop.setText("Stop at i+1"); break;
+            default: pillLoop.setText(marked ? "★ Marked" : "☆ Mark line");
+        }
+        boolean[] on = {!"both".equals(subView), !"normal".equals(pmode),
+            "slow".equals(thirdFn) ? slow : "loop".equals(thirdFn) ? loopOn && loopUntil > 0 : "pi1".equals(thirdFn) ? "pi1".equals(pmode) : marked};
         for (int i = 0; i < 3; i++) {
             ps[i].setBackground(Ui.round(on[i] ? onBg : Ui.CARD, Ui.dp(this, 12)));
             ps[i].setTextColor(on[i] ? Ui.mix(Ui.TEXT, Ui.ACCENT, 0.55f) : Ui.mix(Ui.TEXT, Ui.BG, 0.2f));
@@ -418,7 +498,7 @@ public final class Player extends Activity {
     private void buildPocketControls() {
         pck = Ui.col(this);
         pck.setBackgroundColor(Ui.BG);
-        pck.setPadding(Ui.dp(this, 16), Ui.dp(this, 6), Ui.dp(this, 16), 0);
+        pck.setPadding(0, Ui.dp(this, 6), 0, 0);   // no side padding: the lines header runs edge to edge, the rows above get side margins below
         tl2 = new Timeline(this).slim(ms -> { if (tl2 != null && tl2.dragging()) timesText(ms); });
         tl2.onSeek(ms -> { dragging = false; video.seekTo(ms); shown = -2; primeLine = -1; primePhase = ""; loopUntil = -1; }, () -> dragging = true);
         tl2.onScrub(this::scrub);
@@ -452,13 +532,9 @@ public final class Player extends Activity {
         pck.addView(br);
         LinearLayout pills = Ui.row(this);
         pills.setPadding(0, Ui.dp(this, 2), 0, Ui.dp(this, 10));
-        pillTr = quickPill("Translation", () -> { hideTr = !hideTr; if (adapter != null) adapter.notifyDataSetChanged(); shown = -2; pillsUpdate(); }, null);
-        pillAuto = quickPill("Auto-pause", () -> { setMode("pi1".equals(pmode) ? "normal" : "pi1"); pillsUpdate(); }, this::modeMenu);
-        pillLoop = quickPill("Loop line", () -> {
-            if (loopOn && loopUntil > 0) { loopOn = false; loopUntil = -1; }
-            else { action("repeat"); loopOn = loopUntil > 0; if (loopOn) loopLeft = 0; }
-            pillsUpdate();
-        }, () -> action("quick"));
+        pillTr = quickPill("Text + translation", this::cycleSubView, () -> subViewMenu());
+        pillAuto = quickPill("Normal", this::cycleMode, this::modeMenu);
+        pillLoop = quickPill("☆ Mark line", this::thirdTap, this::thirdPick);
         TextView[] ps = {pillTr, pillAuto, pillLoop};
         for (int i = 0; i < 3; i++) {
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, Ui.dp(this, 40), 1f);
@@ -480,7 +556,10 @@ public final class Player extends Activity {
         newInView = Ui.text(this, "", 12, Ui.DIM);
         linesHead.addView(newInView);
         LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        hl.leftMargin = hl.rightMargin = -Ui.dp(this, 16);
+        for (int i = 0; i < pck.getChildCount(); i++) {
+            LinearLayout.LayoutParams cp = (LinearLayout.LayoutParams) pck.getChildAt(i).getLayoutParams();
+            cp.leftMargin = cp.rightMargin = Ui.dp(this, 16);
+        }
         pck.addView(linesHead, hl);
         FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP);
         root.addView(pck, fl);
@@ -640,7 +719,8 @@ public final class Player extends Activity {
                 } else tx.setText(sp);
                 tr.setText(t);
                 tr.setVisibility(t.isEmpty() || hideTr ? View.GONE : View.VISIBLE);
-                tx.setVisibility(hideSub && !cur ? View.GONE : View.VISIBLE);
+                boolean noTr = t.isEmpty();
+                tx.setVisibility("tr".equals(subView) ? (noTr ? View.VISIBLE : View.GONE) : hideSub && !cur ? View.GONE : View.VISIBLE);
             }
             View.OnClickListener go = x -> jump(pos);
             row.setOnClickListener(go); time.setOnClickListener(go); tr.setOnClickListener(go); tx.setOnClickListener(go);
@@ -779,9 +859,19 @@ public final class Player extends Activity {
     /** Time to read a translation before the line plays: by its length, 1.5 to 8 s. */
     private long readMs(String tr) { return Math.max(1500, Math.min(8000, 700 + tr.length() * 55L)); }
 
+    /** The translation of a line: the cues of the second track that are mostly inside it (their middle falls in the line), so a neighbouring
+     *  translation that only touches the edge goes to its own line; when none is inside, the one that overlaps most. */
     private String trFor(Subs.Cue c) {
         StringBuilder tr = new StringBuilder();
-        for (Subs.Cue x : second) if (x.start < c.end && x.end > c.start) { if (tr.length() > 0) tr.append('\n'); tr.append(x.text); }
+        Subs.Cue best = null;
+        double bestOv = 0;
+        for (Subs.Cue x : second) {
+            if (x.start > c.end + 3) break;
+            double mid = (x.start + x.end) / 2, ov = Math.min(x.end, c.end) - Math.max(x.start, c.start);
+            if (mid >= c.start - 0.05 && mid < c.end + 0.05) { if (tr.length() > 0) tr.append('\n'); tr.append(x.text); }
+            else if (ov > bestOv) { bestOv = ov; best = x; }
+        }
+        if (tr.length() == 0 && best != null && bestOv >= 0.3 * Math.min(c.end - c.start, best.end - best.start)) tr.append(best.text);
         return tr.toString();
     }
 
@@ -1450,7 +1540,8 @@ public final class Player extends Activity {
         }
         if (i < 0) { subText.setVisibility(View.GONE); trText.setVisibility(View.GONE); return; }
         Subs.Cue c = main.get(i);
-        boolean modeHides = hideSub || !modeShows(i);
+        boolean hs = hideSub && !("tr".equals(subView) && trFor(c).isEmpty());        // no translation for this line: the text, rather than nothing
+        boolean modeHides = hs || !modeShows(i);
         if (modeHides) { subText.setVisibility(View.GONE); }
         markIcon(Marks.isMarked(file.getName(), c.start));
         if (prime && i == primeLine && ("read".equals(primePhase) || "listen".equals(primePhase))) {
@@ -1463,10 +1554,9 @@ public final class Player extends Activity {
         final String text = c.text;
         app.bg(() -> {
             CharSequence s = col.spans(text, (word, start, end, tx) -> tapped(word, start, tx, c));
-            app.post(() -> { if (shown == i && !hideSub && modeShows(i)) { subText.setText(s); subText.setVisibility(View.VISIBLE); } });
+            app.post(() -> { if (shown == i && !hs && modeShows(i)) { subText.setText(s); subText.setVisibility(View.VISIBLE); } });
         });
-        StringBuilder tr = new StringBuilder();
-        for (Subs.Cue x : second) if (x.start < c.end && x.end > c.start) { if (tr.length() > 0) tr.append('\n'); tr.append(x.text); }
+        String tr = trFor(c);
         trText.setText(tr);
         trText.setVisibility(tr.length() > 0 && !hideTr ? View.VISIBLE : View.GONE);
     }

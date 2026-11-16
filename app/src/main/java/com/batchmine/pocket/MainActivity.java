@@ -2149,7 +2149,7 @@ public final class MainActivity extends Activity {
             Ui.choose(this, "↺ plays the line", names, -1, i -> { app.prefs().edit().putInt(Player.lk("loop_times"), n[i]).apply(); show(); });
         });
         Ui.add(l, g, 0);
-        l.addView(Ui.hint(this, "The stopwatch counts while a video plays (or is paused for a moment) and while you read. Its time goes to the PC at each sync and shows in Home → This week there."));
+        l.addView(Ui.hint(this, "The clock in the player and the reader shows the time on that video or book; hold it for today's total, to set it or to reset it. Today's total goes to the PC at each sync and shows in Home → This week there."));
 
         // ---- dictionaries
         l.addView(Ui.section(this, "Dictionaries"));
