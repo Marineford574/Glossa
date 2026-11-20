@@ -37,7 +37,7 @@ import java.util.Map;
 
 /** The main screen: Home (continue, shelves), Books, Videos, Words and Settings, with the language and the sync button on top. */
 public final class MainActivity extends Activity {
-    static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3, REQ_PHOTO = 4, REQ_VFOLDER = 5, REQ_BFOLDER = 6, REQ_BACKUP = 11, REQ_RESTORE = 12, REQ_DICTCC = 13;
+    static final int REQ_BOOK = 1, REQ_VIDEO = 2, REQ_DICT = 3, REQ_PHOTO = 4, REQ_VFOLDER = 5, REQ_BFOLDER = 6, REQ_BACKUP = 11, REQ_RESTORE = 12, REQ_DICTCC = 13, REQ_SCAN = 14;
     private App app;
     private FrameLayout body;
     private TextView langBtn, status, pageTitle, kicker;
@@ -592,6 +592,8 @@ public final class MainActivity extends Activity {
         if (app.pc() == null)
             Kit.add(l, Kit.actionCard(this, "Link the PC", "Exchange words, cards and where you stopped with Glossa on the PC.", "Link", v -> toSettings()));
         Kit.add(l, Kit.actionCard(this, "Look up a sentence", "Type or paste a sentence and tap a word.", null, v -> Lookup.open(this, null)));
+        if (app.pc() != null)
+            Kit.add(l, Kit.actionCard(this, "Read a picture 📷", "A sign, menu, page or screenshot: the PC reads the text, you tap the words.", null, v -> scanPicture()));
         if (app.pc() != null)
             Kit.add(l, Kit.actionCard(this, "Quiz me ✨", "A short quiz on words you mined lately, written by the AI on the PC.", null, v -> Ai.quiz(this, app.lang(), null)));
 
@@ -1948,6 +1950,7 @@ public final class MainActivity extends Activity {
         int tray = Tray.count();
         Flow acts = new Flow(this, 8);
         acts.addView(Kit.textButton(this, "Look up a sentence", "Look up a sentence", false, v -> Lookup.open(this, null)));
+        acts.addView(Kit.textButton(this, "Read a picture", "Read the text in a picture (the PC reads it)", false, v -> scanPicture()));
         if (!pend.isEmpty()) acts.addView(Kit.textButton(this, "Send now", "Send the waiting cards to the PC", false, v -> sync()));
         Kit.add(l, acts, 12);
         // the tabs: a tab with nothing in it is left out (Saved and Known always stay)
@@ -2540,6 +2543,36 @@ public final class MainActivity extends Activity {
         else if (req == REQ_DICT) importDict(uris.get(0));
         else if (req == REQ_DICTCC) importDictCc(uris.get(0));
         else if (req == REQ_PHOTO) photoBook(uris);
+        else if (req == REQ_SCAN) scanRead(uris.get(0));
+    }
+
+    /** "Read a picture": a photo or screenshot (a sign, a menu, a page, a game) is read by the PC (tesseract / manga-ocr); the text opens in "Look up a sentence". */
+    void scanPicture() {
+        if (app.pc() == null) { Ui.toast(this, "Link the PC first (Settings): it reads the picture"); return; }
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("image/*");
+        startActivityForResult(Intent.createChooser(i, "A picture with text"), REQ_SCAN);
+    }
+
+    private void scanRead(Uri u) {
+        PcLink pc = app.pc();
+        if (pc == null) return;
+        String lang = app.lang();
+        Ui.toast(this, "The PC is reading the picture…");
+        app.bg(() -> {
+            try {
+                Map<String, Object> body = new java.util.LinkedHashMap<>();
+                body.put("lang", lang); body.put("image", jpegDataUrl(u));
+                Map<String, Object> r = pc.post("/api/ocr/image", body, 120000);
+                String text = Json.str(r.get("text"), "").trim();
+                app.post(() -> {
+                    if (text.isEmpty()) Ui.alert(this, "Nothing to read", "The PC found no text in that picture. Try a closer, straighter picture.");
+                    else Lookup.open(this, text);
+                });
+            } catch (IOException | RuntimeException e) {
+                app.post(() -> Ui.alert(this, "Could not read the picture", e instanceof IOException ? explain((IOException) e) : String.valueOf(e)));
+            }
+        });
     }
 
     private Map<String, File> backupFolders() {

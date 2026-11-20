@@ -32,6 +32,8 @@ final class Lookup {
         EditText in = Ui.input(a, start == null ? "" : start, "Type or paste a sentence");
         in.setMinLines(2); in.setSingleLine(false);
         Ui.add(box, in, 8);
+        if (a instanceof MainActivity && App.get().pc() != null)
+            box.addView(Ui.flat(a, "Read a picture instead…", v -> ((MainActivity) a).scanPicture()));
         LinearLayout words = Ui.col(a), found = Ui.col(a);
         Flow chips = new Flow(a, 8);
         box.addView(Ui.primary(a, "Show the words", v -> {
