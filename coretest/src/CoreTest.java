@@ -253,6 +253,22 @@ public class CoreTest {
       boolean jim = false; for (Map<String, Object> m : jf) if ("Jimaku".equals(m.get("source")) && String.valueOf(m.get("name")).endsWith("SNK - 05.srt") && Integer.valueOf(5).equals(m.get("episode"))) jim = true;
       check("ja: Jimaku search sends the key and lists the episode's files", jim && "KEY123".equals(auth[0]), jf + " " + auth[0] + " " + jn);
     }
+    {
+      File sd3 = java.nio.file.Files.createTempDirectory("sv").toFile();
+      WordStore sv = new WordStore(sd3, "it");
+      Map<String, Object> w1 = new LinkedHashMap<>(); w1.put("word", "Casa"); w1.put("sentence", "La casa e grande."); w1.put("source", "Libro"); w1.put("t", 1790000000123L);
+      Map<String, Object> w2 = new LinkedHashMap<>(); w2.put("word", "gatto"); w2.put("sentence", ""); w2.put("source", "Libro"); w2.put("t", 1790000000456L);
+      sv.saveWord(w1); sv.saveWord(w2);
+      List<Object> out1 = Json.arr(sv.outgoing().get("saved"));
+      check("saved words: only those with a sentence go to the PC", out1.size() == 1 && "saved:1790000000123:casa".equals(Json.str(Json.obj(out1.get(0)).get("key"), "")) && "1790000000123".equals(Json.str(Json.obj(out1.get(0)).get("t"), "")), out1);
+      Map<String, Object> svres = new LinkedHashMap<>();
+      Map<String, Object> st = new LinkedHashMap<>(); st.put("key", "saved:1790000000123:casa"); st.put("status", "in the tray");
+      svres.put("saved", new ArrayList<>(java.util.Arrays.asList(st)));
+      sv.sent(sv.outgoing(), svres);
+      check("saved words: held on the PC -> not sent again", Json.arr(sv.outgoing().get("saved")).isEmpty(), sv.outgoing());
+      WordStore sv2 = new WordStore(sd3, "it");
+      check("saved words: the sent mark survives a restart, the list stays", Json.arr(sv2.outgoing().get("saved")).isEmpty() && sv2.saved().size() == 2, sv2.outgoing());
+    }
     System.out.println(fails == 0 ? "all passed" : fails + " FAILED");
     System.exit(fails == 0 ? 0 : 1);
   }

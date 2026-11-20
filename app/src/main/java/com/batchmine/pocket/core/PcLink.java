@@ -134,6 +134,9 @@ public final class PcLink {
         int ka = Json.arr(out.get("known_add")).size() + Json.arr(out.get("known_remove")).size();
         if (ka > 0) msg.append(", ").append(ka).append(" change(s) sent");
         if (cards > 0) msg.append(", ").append(cards).append(" card(s) sent to the PC");
+        int held = 0;
+        for (Object c : Json.arr(res.get("saved"))) if ("in the tray".equals(Json.str(Json.obj(c).get("status"), ""))) held++;
+        if (held > 0) msg.append(", ").append(held).append(" saved word(s) held in the PC's tray");
         String err = Json.str(res.get("error"), "");
         if (!err.isEmpty()) msg.append(" (").append(err).append(")");
         return msg.toString();

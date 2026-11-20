@@ -33,6 +33,7 @@ public final class WordStore {
     private final Set<String> mined = new LinkedHashSet<>();
     private final List<Map<String, Object>> saved = new ArrayList<>();
     private final List<Map<String, Object>> pending = new ArrayList<>();  // cards for the PC to make
+    private final Set<String> savedSent = new LinkedHashSet<>();           // saved words the PC already holds (keys), the last 3000
     private long pulled = 0;
 
     public WordStore(File dir, String lang) {
@@ -54,6 +55,7 @@ public final class WordStore {
             for (Object w : Json.arr(m.get("mined"))) mined.add(Json.str(w, ""));
             for (Object x : Json.arr(m.get("saved"))) saved.add(Json.obj(x));
             for (Object x : Json.arr(m.get("pending"))) pending.add(Json.obj(x));
+            for (Object x : Json.arr(m.get("saved_sent"))) savedSent.add(Json.str(x, ""));
             pulled = (long) Json.num(m.get("pulled"), 0);
         } catch (IOException | RuntimeException e) {
             // Damaged (cut off while being written?): keep it aside so it is not overwritten by an empty list, and go on.
@@ -83,6 +85,7 @@ public final class WordStore {
         m.put("mined", new ArrayList<>(mined));
         m.put("saved", new ArrayList<>(saved));
         m.put("pending", new ArrayList<>(pending));
+        m.put("saved_sent", new ArrayList<>(savedSent));
         try {
             File tmp = new File(file.getPath() + ".tmp");
             Files.write(tmp.toPath(), Json.write(m).getBytes(StandardCharsets.UTF_8));
@@ -185,7 +188,22 @@ public final class WordStore {
 
     public synchronized long pulledAt() { return pulled; }
 
-    public synchronized int unsentCount() { return knownAdd.size() + knownDel.size() + seenAdd.size() + pending.size(); }
+    public synchronized int unsentCount() { return knownAdd.size() + knownDel.size() + seenAdd.size() + pending.size() + unsentSaved().size(); }
+
+    /** The key the PC knows a saved word by (the same text on both sides, so a word is never held twice). */
+    static String savedKey(Map<String, Object> x) {
+        return "saved:" + (long) Json.num(x.get("t"), 0) + ":" + Json.str(x.get("word"), "").toLowerCase();
+    }
+
+    /** Saved words with a sentence that the PC does not hold yet (without a sentence there is nothing to make a card from). */
+    private List<Map<String, Object>> unsentSaved() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> x : saved) {
+            if (Json.str(x.get("sentence"), "").trim().isEmpty() || Json.str(x.get("word"), "").trim().isEmpty()) continue;
+            if (!savedSent.contains(savedKey(x))) out.add(x);
+        }
+        return out;
+    }
 
     // ---------------------------------------------------------------- sync
     /** What to send to the PC. */
@@ -196,6 +214,17 @@ public final class WordStore {
         m.put("known_remove", new ArrayList<>(knownDel));
         m.put("seen", new LinkedHashMap<>(seenAdd));
         m.put("cards", new ArrayList<>(pending));
+        List<Object> sv = new ArrayList<>();
+        for (Map<String, Object> x : unsentSaved()) {
+            Map<String, Object> o = new LinkedHashMap<>();
+            o.put("key", savedKey(x));
+            o.put("word", x.get("word"));
+            o.put("sentence", x.get("sentence"));
+            o.put("source", x.get("source"));
+            o.put("t", Long.toString((long) Json.num(x.get("t"), 0)));      // text: a long number must not turn into 1.7E12 on the way
+            sv.add(o);
+        }
+        m.put("saved", sv);
         return m;
     }
 
@@ -218,6 +247,12 @@ public final class WordStore {
             if (!"error".equals(cm.get("status"))) taken.add(Json.str(cm.get("id"), ""));
         }
         pending.removeIf(x -> taken.contains(Json.str(x.get("id"), "")));
+        for (Object c : Json.arr(result.get("saved"))) {                // the PC holds these now (or held them before): not again
+            Map<String, Object> cm = Json.obj(c);
+            String st = Json.str(cm.get("status"), "");
+            if (!"error".equals(st)) savedSent.add(Json.str(cm.get("key"), ""));
+        }
+        while (savedSent.size() > 3000) savedSent.remove(savedSent.iterator().next());
         save();
     }
 
